@@ -14,7 +14,7 @@ library(ggrastr)
 
 ###loading###
 #input unintegrate object generate from sc-Multiome workflow (https://github.com/NICHD-BSPC/multiome-wf)
-#first round
+###first round###
 Arx_MGE=readRDS("clustered_data.rds")
 Arx_MGE
 table(Arx_MGE$meta_sample)
@@ -42,9 +42,8 @@ write.csv(top10, 'top10_clusters.csv')
 
 #annotate cell type
 Idents(Arx_MGE)='wsnn_res.1.2'
-DefaultAssay(Arx_MGE)='SCT'
-
-new_cell.type = case_when(Arx_MGE$wsnn_res.1.2 %in% c(0) ~ "Sst+/Lmo3+",
+DefaultAssay(Arx_MGE)='RNA'
+cell.type = case_when(Arx_MGE$wsnn_res.1.2 %in% c(0) ~ "Sst+/Lmo3+",
                           Arx_MGE$wsnn_res.1.2 %in% c(1) ~ "Maf+",
                           Arx_MGE$wsnn_res.1.2 %in% c(2,25,10) ~ "Nes+ Apical progenitors",
                           Arx_MGE$wsnn_res.1.2 %in% c(14, 4, 9) ~ "Ccnd2+ Basal progenitors",
@@ -66,26 +65,539 @@ new_cell.type = case_when(Arx_MGE$wsnn_res.1.2 %in% c(0) ~ "Sst+/Lmo3+",
                           Arx_MGE$wsnn_res.1.2 %in% c(26) ~ "Chat+ Cholinergic Lingeage",
                           Arx_MGE$wsnn_res.1.2 %in% c(17) ~ "Lhx8+/Gabra1+")
                      
-Arx_MGE=AddMetaData(Arx_MGE,metadata=new_cell.type,col.name = "new_cell.type")
-DimPlot(Arx_MGE,reduction = 'wnn_umap', group.by ='new_cell.type')
-ggsave('cell_type_1.pdf',plot = last_plot(),device = 'pdf',width = 8,height = 5)
+Arx_MGE=AddMetaData(Arx_MGE,metadata=cell.type,col.name = "cell.type")
+DimPlot(Arx_MGE,reduction = 'wnn_umap', group.by ='cell.type')
+ggsave('cell_type.pdf',plot = last_plot(),device = 'pdf',width = 8,height = 5)
 
+###second round###
+#subset/filter object
+Idents(Arx_MGE)='wsnn_res.1.2'
+Arx_filter=subset(Arx_MGE, idents=c('16','12','22','27'), invert=TRUE) #remove non-MGE lineage clusters
+# standard seurat workflow
+DefaultAssay(Arx_filter) = 'Gene.Expression' # Gene.Expression=RNA assay
+options(future.globals.maxSize=8000*1024^3) 
+options(future.rng.onMisuse='ignore')
+Arx_filter=NormalizeData(object = Arx_filter)
+Arx_filter=FindVariableFeatures(object = Arx_filter,nfeatures = 3000)
+Arx_filter=ScaleData(Arx_filter)
+Arx_filter=RunPCA(Arx_filter)
+Arx_filter=FindNeighbors(Arx_filter,dim=1:30)
+Arx_filter=FindClusters(Arx_filter)
+Arx_filter=RunUMAP(Arx_filter,dims = 1:30)
 
+DefaultAssay(Arx_filter) = 'Gene.Expression'
+DimPlot(Arx_filter,reduction = 'umap',group.by = 'meta_sample',cols = c('springgreen4','mediumorchid','aquamarine','pink1'))
+ggsave('umap_sample.pdf',plot = last_plot(),device = 'pdf',width = 8,height = 5)
+Idents(Arx_filter)='meta_sample'
+DimPlot(Arx_filter,reduction = 'umap',split.by = 'meta_sample',cols = c('springgreen4','mediumorchid','aquamarine','pink1'))
+ggsave('umap_sample_split.pdf',plot = last_plot(),device = 'pdf',width = 15,height = 5)
+FeaturePlot(Arx_filter,features = 'Nkx2-1',reduction = 'umap',cols = c('#f6f5ee','#f60000'))
 
+#standard signac workflow
+DefaultAssay(Arx_filter) = 'Peaks'
+Arx_filter<- RunTFIDF(Arx_filter)
+Arx_filter <- FindTopFeatures(Arx_filter, min.cutoff = 'q0')
+Arx_filter<- RunSVD(Arx_filter)
+Arx_filter
+DepthCor(Arx_filter)
+dims = 2:30 # set the dimensions to exclude the first one
 
+Arx_filter<- Arx_filter%>% 
+  RunUMAP(reduction = 'lsi', dims = dims, verbose = F,reduction.key = "UMAP_peak") %>% 
+  FindNeighbors( reduction = 'lsi', dims = dims) %>% 
+  FindClusters( verbose = F)
+DefaultAssay(Arx_filter) = 'Peaks'
+DimPlot(Arx_filter,reduction = 'umap',group.by = 'meta_sample',cols = c('springgreen4','mediumorchid','aquamarine','pink1'))
+DimPlot(Arx_filter,reduction = 'umap',group.by = 'meta_sample',cols = c('springgreen4','mediumorchid','aquamarine','pink1'))
+ggsave('umap_sample_peak.pdf',plot = last_plot(),device = 'pdf',width = 8,height = 5)
 
+###Integrate RNA and Peaks (ATAC) assay
+Arx_filter<- FindMultiModalNeighbors(
+  Arx_filter, reduction.list = list("pca", "lsi"), dims.list = list(1:30, 2:30), 
+  modality.weight.name = c("RNA.weight", 'peaks.weight'))
+#calculate the joint UMAP and clustering using the WNN graph
+Arx_filter<- RunUMAP(Arx_filter, nn.name = "weighted.nn", verbose = F, 
+                      reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+Arx_filter <- FindClusters(Arx_filter, graph.name = "wsnn", verbose = F, cluster.name = 'joint_clusters')
+DimPlot(Arx_filter, reduction = 'wnn.umap', split.by = 'meta_sample', label = FALSE,cols =c('#76d6ff','#ff7e79','#7a81ff','#ff8ad8') ) 
+ggsave('wnn.clusters_split_sample.pdf',plot = last_plot(),device = 'pdf',width = 15,height = 5)
+saveRDS(Arx_filter, 'Arx_filter.rds')
 
+#identified clusters marker
+DefaultAssay(Arx_filter) = 'Gene.Expression'
+Arx_filter=JoinLayers(Arx_filter, assay ='Gene.Expression')
+Arx_filter
+cluster_de<-FindAllMarkers(Arx_filter, verbose = F, test.use = "wilcox")
+cluster_de %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+write.csv(top10, 'top10_clusters_new.csv')
+#visualize marker genes
+feature=c('Nes','Ccnd2','Dcx','Rbfox3')
+feature2=c('Lhx8','Lhx6','Nkx2-1','Mbip')
+feature3=c('Sst','Maf','Islr2')
+FeaturePlot(Arx_filter,features = features,reduction = 'wnn.umap',cols = c('#f6f5ee','#f60000'))
 
+#annotate cell type
+Idents(Arx_filter)='joint_clusters'
+DefaultAssay(Arx_filter)='Gene.Expression'
+cell.type_filter = case_when(Arx_filter$joint_clusters %in% c(0) ~ "Lmo1/3/4+",
+                          Arx_filter$joint_clusters %in% c(1) ~ "Maf+ Lineage",
+                          Arx_filter$joint_clusters %in% c(2,12) ~ "Nes+ Apical progenitors",
+                          Arx_filter$joint_clusters %in% c(4) ~ "Cenpe+ Basal progenitors 1",
+                          Arx_filter$joint_clusters %in% c(9) ~ "Top2a+ Basal progenitors 2",
+                          Arx_filter$joint_clusters %in% c(15) ~ "Ccnd2/Isl1+",
+                          Arx_filter$joint_clusters %in% c(21) ~ "Pdgfra+ Oligodendrocyte Lineage",
+                          Arx_filter$joint_clusters %in% c(3) ~ "Nr2f1/Nr2f2+", #SST fated
+                          Arx_filter$joint_clusters %in% c(16) ~ "Ebf3+",
+                          Arx_filter$joint_clusters %in% c(8) ~ "Lmx1b+",
+                          Arx_filter$joint_clusters %in% c(5) ~ "Lhx8/Lypd6+",
+                          Arx_filter$joint_clusters %in% c(7) ~ "Lhx8/Cntn1+",
+                          Arx_filter$joint_clusters %in% c(11) ~ "Lhx8/Kctd8+",
+                          Arx_filter$joint_clusters %in% c(18) ~ "Nr4a2+",
+                          Arx_filter$joint_clusters %in% c(17) ~ "Calb1/Hs3st4+",
+                          Arx_filter$joint_clusters %in% c(13) ~ "Lhx8/Gabra1+",
+                          Arx_filter$joint_clusters %in% c(10) ~ "Calb1/Fstl4+",
+                          Arx_filter$joint_clusters %in% c(19,6,14) ~ "Islr2+",
+                          Arx_filter$joint_clusters %in% c(20) ~ "Lhx8/Chat+")
+                     
+Arx_filter=AddMetaData(Arx_filter,metadata=cell.type_filter,col.name = "cell.type_filter")
+#reorder cell type
+table(Arx_filter$cell.type_filter)
+DefaultAssay(Arx_filter) = 'Gene.Expression'
+Arx_filter$cell.type_filter=as.character(Arx_filter$cell.type_filter)
+level=c('Nes+ Apical progenitors','Cenpe+ Basal progenitors 1','Top2a+ Basal progenitors 2','Ccnd2/Isl1+',
+'Maf+ Lineage','Nr2f1/Nr2f2+','Lhx8/Lypd6+','Lhx8/Cntn1+','Lhx8/Kctd8+','Lhx8/Gabra1+','Lhx8/Chat+','Calb1/Hs3st4+',
+'Calb1/Fstl4+','Lmo1/3/4+','Lmx1b+','Ebf3+','Nr4a2+','Islr2+','Pdgfra+ Oligodendrocyte Lineage')
 
+Arx_filter$cell.type_filter=factor(Arx_filter$cell.type_filter, levels = level)
+table(Arx_filter$cell.type_filter)
+Arx_filter$cell.type_filter=as.factor(Arx_filter$cell.type_filter)
+#
+cols_clust = Arx_filter$joint_clusters %>% unique() %>% length() %>% DiscretePalette(palette = 'alphabet')
+DimPlot(Arx_filter,reduction = 'wnn.umap', group.by ='cell.type_filter',cols = cols_clust)
+DimPlot(Arx_filter,reduction = 'wnn.umap', group.by ='cell.type_filter',split.by = 'meta_sample',cols = cols_clust)
+ggsave('cell_type_filter.pdf',plot = last_plot(),device = 'pdf',width = 8,height = 5)
+ggsave('cell_type_filter_sample.pdf',plot = last_plot(),device = 'pdf',width = 15,height = 5)
+#heatmap
+Idents(Arx_filter)='cell.type_filter'
+celltype_de<-FindAllMarkers(Arx_filter, verbose = F, test.use = "wilcox")
+celltype_de%>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 5) %>%
+    ungroup() -> top5
+DoHeatmap(Arx_filter, features = top5$gene) + NoLegend()+ scale_fill_gradientn(colors = c("#90C9E7", "white", "#FA8600"))
+###MGE proporation###
+# quantify the cell type proportions for each animal using data frame aggregation operations
+df_prop = Arx_filter[[]] %>% 
+  # group by animal ID and experimental variables we want to keep & cell type
+  group_by(meta_sample, cell.type_filter) %>% 
+  # count the number of cells in each cell type
+  summarize(n = n()) %>% 
+  # calculate the proportion of each cell type in each animal
+  mutate(prop = n / sum(n)*100) %>% ungroup() %>% 
+  arrange(meta_sample, cell.type_filter) 
 
+df_prop
+## plotting by the proportion of cells  
+ggplot(df_prop,aes(meta_sample,prop))+ geom_bar(aes(fill=cell.type_filter),stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = cols_clust)
+ggsave('MGE_cell.type_prop_filter_reorder.pdf',plot = last_plot(),device = 'pdf',,width = 8,height = 12)
+write.csv(df_prop,'cell_type_prop.csv')
 
+###visualize gene expression
+Arx_filter=readRDS('Arx_filter.rds')
+DefaultAssay(Arx_filter)='Gene.Expression'
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Lhx8',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Lmo3',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Sst',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Lhx6',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Shh',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Nkx2-1',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Lmx1b',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Ebf3',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Lmo1',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Nrg1',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Ackr3',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Kcnq3',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Glyctk',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Maf',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Pbx1',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Rbfox1',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Etv1',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Lmo4',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Magel2',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+FeaturePlot(Arx_filter,reduction = 'wnn.umap',features = 'Pbx3',cols = c('#f6f5ee','springgreen4'),split.by = 'meta_sample')
+...
+###Trajection analysis using monocle3###
+#wt/y MGE
+Idents(Arx_filter)='meta_sample'
+wt_y=subset(Arx_filter,idents='1')
+cds=as.cell_data_set(wt_y)
+cds
+colData(cds)
+fData(cds)
+fData(cds)$gene_short_name=rownames(fData(cds))
+counts(cds)
+reacreate.partition=c(rep(1,length(cds@colData@rownames)))
+names(reacreate.partition)=cds@colData@rownames
+reacreate.partition=as.factor(reacreate.partition)
+cds@clusters$UMAP$partitions=reacreate.partition
 
+Idents(wt_y)='joint_clusters'
+list_cluster=wt_y@active.ident
+cds@clusters$UMAP$clusters=list_cluster
 
+cds@int_colData@listData$reducedDims$UMAP=wt_y@reductions$wnn.umap@cell.embeddings
+#plot
+cluster.before.trajectory=plot_cells(cds,color_cells_by = 'cluster',
+                                     label_groups_by_cluster = FALSE,
+                                     group_label_size = 5)+theme(legend.position = 'right')
+cluster.before.trajectory
+#learn trajectory graph
+cds=learn_graph(cds, use_partition = FALSE)
+plot_cells(cds,
+           color_cells_by='cluster',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE,
+           group_label_size = 5)
+#order cells in pseudotime
+cds=order_cells(cds,reduction_method = "UMAP",root_cells = colnames(cds[,clusters(cds)==c(12)]))
+plot_cells(cds,
+           color_cells_by='pseudotime',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE)
+ggsave('wt_y_pseudotime.pdf',plot = last_plot(),device = 'pdf')
+#cko MGE
+Idents(Arx_filter)='meta_sample'
+fl_y=subset(Arx_filter,idents='2')
+cds=as.cell_data_set(fl_y)
+cds
+colData(cds)
+fData(cds)
+fData(cds)$gene_short_name=rownames(fData(cds))
+counts(cds)
+reacreate.partition=c(rep(1,length(cds@colData@rownames)))
+names(reacreate.partition)=cds@colData@rownames
+reacreate.partition=as.factor(reacreate.partition)
+cds@clusters$UMAP$partitions=reacreate.partition
 
+Idents(fl_y)='joint_clusters'
+list_cluster=fl_y@active.ident
+cds@clusters$UMAP$clusters=list_cluster
 
+cds@int_colData@listData$reducedDims$UMAP=fl_y@reductions$wnn.umap@cell.embeddings
+#plot
+cluster.before.trajectory=plot_cells(cds,color_cells_by = 'cluster',
+                                     label_groups_by_cluster = FALSE,
+                                     group_label_size = 5)+theme(legend.position = 'right')
+cluster.before.trajectory
+#learn trajectory graph
+cds=learn_graph(cds, use_partition = FALSE)
+plot_cells(cds,
+           color_cells_by='cluster',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE,
+           group_label_size = 5)
+#order cells in pseudotime
+cds=order_cells(cds,reduction_method = "UMAP",root_cells = colnames(cds[,clusters(cds)==c(12)]))
+plot_cells(cds,
+           color_cells_by='pseudotime',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE)
+ggsave('fl_y_pseudotime.pdf',plot = last_plot(),device = 'pdf')
+#wt_wt MGE
+Idents(Arx_filter)='meta_sample'
+wt_wt=subset(Arx_filter,idents='3')
+cds=as.cell_data_set(wt_wt)
+cds
+colData(cds)
+fData(cds)
+fData(cds)$gene_short_name=rownames(fData(cds))
+counts(cds)
+reacreate.partition=c(rep(1,length(cds@colData@rownames)))
+names(reacreate.partition)=cds@colData@rownames
+reacreate.partition=as.factor(reacreate.partition)
+cds@clusters$UMAP$partitions=reacreate.partition
 
+Idents(wt_wt)='joint_clusters'
+list_cluster=wt_wt@active.ident
+cds@clusters$UMAP$clusters=list_cluster
 
+cds@int_colData@listData$reducedDims$UMAP=wt_wt@reductions$wnn.umap@cell.embeddings
+#plot
+cluster.before.trajectory=plot_cells(cds,color_cells_by = 'cluster',
+                                     label_groups_by_cluster = FALSE,
+                                     group_label_size = 5)+theme(legend.position = 'right')
+cluster.before.trajectory
+#learn trajectory graph
+cds=learn_graph(cds, use_partition = FALSE)
+plot_cells(cds,
+           color_cells_by='cluster',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE,
+           group_label_size = 5)
+#order cells in pseudotime
+cds=order_cells(cds,reduction_method = "UMAP",root_cells = colnames(cds[,clusters(cds)==c(12)]))
+plot_cells(cds,
+           color_cells_by='pseudotime',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE)
+ggsave('wt_wt_pseudotime.pdf',plot = last_plot(),device = 'pdf')
+# Het MGE
+Idents(Arx_filter)='meta_sample'
+fl_wt=subset(Arx_filter,idents='4')
+cds=as.cell_data_set(fl_wt)
+cds
+colData(cds)
+fData(cds)
+fData(cds)$gene_short_name=rownames(fData(cds))
+counts(cds)
+reacreate.partition=c(rep(1,length(cds@colData@rownames)))
+names(reacreate.partition)=cds@colData@rownames
+reacreate.partition=as.factor(reacreate.partition)
+cds@clusters$UMAP$partitions=reacreate.partition
 
+Idents(fl_wt)='joint_clusters'
+list_cluster=fl_wt@active.ident
+cds@clusters$UMAP$clusters=list_cluster
+
+cds@int_colData@listData$reducedDims$UMAP=fl_wt@reductions$wnn.umap@cell.embeddings
+#plot
+cluster.before.trajectory=plot_cells(cds,color_cells_by = 'cluster',
+                                     label_groups_by_cluster = FALSE,
+                                     group_label_size = 5)+theme(legend.position = 'right')
+cluster.before.trajectory
+#learn trajectory graph
+cds=learn_graph(cds, use_partition = FALSE)
+plot_cells(cds,
+           color_cells_by='cluster',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE,
+           group_label_size = 5)
+#order cells in pseudotime
+cds=order_cells(cds,reduction_method = "UMAP",root_cells = colnames(cds[,clusters(cds)==c(12)]))
+plot_cells(cds,
+           color_cells_by='pseudotime',
+           label_groups_by_cluster = FALSE,
+           label_branch_points = FALSE,
+           label_roots = FALSE,
+           label_leaves = FALSE)
+ggsave('fl_wt_pseudotime.pdf',plot = last_plot(),device = 'pdf')
+
+###Differential gene expression###
+#identified DEG between female wt and female het
+DefaultAssay(Arx_filter)='Gene.Expression'
+Idents(Arx_filter)='meta_sample'
+female_de<-FindMarkers(Arx_filter, verbose = F, test.use = "wilcox", 
+                          ident.1 = "3", 
+                          ident.2 = "4")
+alpha = 10e-6
+female_de= female_de %>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2) 
+write.csv(female_de, here('Arx_female_de.csv'))
+EnhancedVolcano(female_de,
+                lab = rownames(female_de),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = c('Lmo3','Lmo1','Nrg1','Ebf3','Lmo4','Etv1','Lhx8','Ebf1','Sst','Rbfox1','Nkx2-1',
+                'Maf','Lsamp','Magel2','Kcnq3','Dach1','Mbip','Lmx1b','Pbx1','Pbx3','Erdr1','Ide','Pax7','Glyctk',
+                'Cxcr4','Ackr3','Nova1'),
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-6,
+                FCcutoff = 0.2,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-3.5, 3.5)) 
+ggsave('Arx_female_de.pdf',plot = last_plot(),device = 'pdf')
+#identified DEG between male wt and male cko
+male_de<-FindMarkers(Arx_filter, verbose = F, test.use = "wilcox", 
+                          ident.1 = "1", 
+                          ident.2 = "2")
+alpha = 10e-6
+male_de= male_de %>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2) 
+write.csv(male_de, here('Arx_male_de.csv'))
+EnhancedVolcano(male_de,
+                lab = rownames(male_de),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = c('Lmo3','Lmo1','Nrg1','Ebf3','Lmo4','Etv1','Lhx8','Ebf1',
+                'Sst','Rbfox1','Nkx2-1','Maf','Lsamp','Magel2','Kcnq3','Dach1','Mbip',
+                'Lmx1b','Pbx1','Pbx3','Cxcr4','Ackr3','Glyctk','Wdfy4','Nova1'),
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-6,
+                FCcutoff = 0.2,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-8, 8)) 
+ggsave('Arx_male_de.pdf',plot = last_plot(),device = 'pdf')
+
+###Differential peaks expression###
+#DEP between male wt and male cKO
+DefaultAssay(Arx_filter)='Gene.Activity'
+options(future.globals.maxSize=200000*1024^2)
+Arx_filter <- NormalizeData(Arx_filter, normalization.method = "LogNormalize")
+Arx_filter<- ScaleData(Arx_filter,assay = 'Gene.Activity')
+male_de_atac<-FindMarkers(Arx_filter, verbose = F, test.use = "wilcox",
+                          ident.1 = "1", 
+                          ident.2 = "2")
+alpha = 10e-6
+male_de_atac= male_de_atac%>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2) 
+write.csv(male_de_atac, here('Arx_male_de_atac.csv'))
+EnhancedVolcano(male_de_atac,
+                lab = rownames(male_de_atac),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = c(''),
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-6,
+                FCcutoff = 0.2,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-1.5, 1.5)) 
+#DEP between female wt and female Het
+female_de_atac<-FindMarkers(Arx_filter, verbose = F, test.use = "wilcox", assay = 'Gene.Activity', 
+                          ident.1 = "3", 
+                          ident.2 = "4")
+
+alpha = 10e-6
+female_de_atac= female_de_atac%>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2) 
+write.csv(female_de_atac, here('Arx_female_de_atac.csv'))
+EnhancedVolcano(female_de_atac,
+                lab = rownames(female_de_atac),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = c(''),
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-6,
+                FCcutoff = 0.2,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-1, 1))  
+
+###GO analysis###
+obj=readRDS('Arx_filter.rds')
+counts=obj[['Gene.Expression']]$counts
+# Total counts per gene
+gene_counts <- rowSums(counts)
+head(gene_counts)
+# Filter genes by zero or nonzero counts
+zero_genes <- gene_counts[gene_counts == 0]
+nonzero_genes <- gene_counts[gene_counts > 0]
+head(zero_genes)
+head(nonzero_genes)
+# Break if the counts of all zero_genes are greater than zero
+if (sum(zero_genes) > 0) {
+    stop("Nonzero genes are included in zero_genes!")
+}
+nonzero_gene_names <- names(nonzero_genes)
+head(nonzero_gene_names)
+
+#Over-representation analysis (ORA) with clusterProfiler using DEG between female
+dexp<-read.csv("Arx_female_de.csv")
+colnames(dexp)[1]<-"SYMBOL"
+sigDEGs <- dplyr::filter(dexp, signif=='TRUE')
+go <- enrichGO(gene= sigDEGs$SYMBOL,
+                OrgDb= org.Mm.eg.db,
+                keyType = "SYMBOL",
+               universe=nonzero_gene_names,
+                ont= "BP")
+#Reduce redundancy
+go_simple<-clusterProfiler::simplify(go)
+#Plot
+go_simple %>% filter(p.adjust < 0.05) %>%
+ggplot(showCategory = fe_term,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of DEGs")
+
+#Over-representation analysis (ORA) with clusterProfiler using DEG between male
+dexp<-read.csv("Arx_male_de.csv")
+colnames(dexp)[1]<-"SYMBOL"
+# Extract all significant results for ORA
+sigDEGs <- dplyr::filter(dexp, signif=='TRUE')
+go_male <- enrichGO(gene= sigDEGs$SYMBOL,
+                OrgDb= org.Mm.eg.db,
+                keyType = "SYMBOL",
+                universe=nonzero_gene_names,
+                ont= "BP")
+go_male<-clusterProfiler::simplify(go_male)
+go_male %>% filter(p.adjust < 0.05) %>%
+ggplot(showCategory = term,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of DEGs")
 
 
 
