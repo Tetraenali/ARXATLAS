@@ -1,1 +1,91 @@
+library(Seurat)
+library(ggplot2)
+library(presto)
+library(patchwork)
+library(dplyr)
+library(monocle3)
+library(EnhancedVolcano)
+library(Signac)
+library(tidyverse)
+library(EnsDb.Mmusculus.v79)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(ggrastr)
+
+###loading###
+#input unintegrate object generate from sc-Multiome workflow (https://github.com/NICHD-BSPC/multiome-wf)
+#first round
+Arx_MGE=readRDS("clustered_data.rds")
+Arx_MGE
+table(Arx_MGE$meta_sample)
+#E13 sample 1:wt_y, 2:fl_y, 3:wt_wt, 4:fl_wt
+cols_clust = Arx_MGE$wsnn_res.1.2%>% unique() %>% length() %>% DiscretePalette(palette = 'polychrome')
+DimPlot(Arx_MGE,reduction = 'wnn_umap',group.by = 'wsnn_res.1.2',pt.size = 0.1, cols = cols_clust,label = TRUE)
+DimPlot(Arx_MGE,reduction = 'wnn_umap',group.by = 'wsnn_res.1.2',pt.size = 0.1, split.by = 'meta_sample',cols = cols_clust,label = TRUE)
+ggsave('wsnn_clusters_label_1.2_split_by_sample.pdf',plot = last_plot(),device = 'pdf',width = 15,height = 5)
+
+DimPlot(Arx_MGE,reduction = 'wnn_umap',group.by = 'meta_sample',cols = c('springgreen4','mediumorchid','aquamarine','pink1'))
+DimPlot(Arx_MGE,reduction = 'wnn_umap',split.by = 'meta_sample',cols = c('springgreen4','mediumorchid','aquamarine','pink1'))
+ggsave('wsnn_clusters_splite_samples.pdf',plot = last_plot(),device = 'pdf',width = 10,height = 5)
+
+# identified marker genes of clusters
+DefaultAssay(Arx_MGE)='RNA'
+cluster_de<-FindAllMarkers(Arx_MGE, verbose = F, test.use = "wilcox")
+cluster_de %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(Arx_MGE, features = top10$gene) + NoLegend()
+ggsave('top10_clusters.pdf',plot = last_plot(),device = 'pdf',width = 10,height = 20)
+write.csv(top10, 'top10_clusters.csv')
+
+#annotate cell type
+Idents(Arx_MGE)='wsnn_res.1.2'
+DefaultAssay(Arx_MGE)='SCT'
+
+new_cell.type = case_when(Arx_MGE$wsnn_res.1.2 %in% c(0) ~ "Sst+/Lmo3+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(1) ~ "Maf+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(2,25,10) ~ "Nes+ Apical progenitors",
+                          Arx_MGE$wsnn_res.1.2 %in% c(14, 4, 9) ~ "Ccnd2+ Basal progenitors",
+                          Arx_MGE$wsnn_res.1.2 %in% c(28) ~ "Pdgfra+ Oligodendrocyte Lineage",
+                          Arx_MGE$wsnn_res.1.2 %in% c(11) ~ "Nr2f1/Nr2f2+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(6) ~ "Sst+/Lhx8-",
+                          Arx_MGE$wsnn_res.1.2 %in% c(3) ~ "Lhx8+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(21) ~ "Lhx8+/Foxp2+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(13) ~ "Lhx8+/Isl2+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(24) ~ "Lhx8+/Isl1+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(15) ~ "Sst+/Lhx8+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(7) ~ "Lhx8+/Gabrb2+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(8) ~ "Lhx8+/Cntn1+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(19) ~ "Lhx8+/Glra2",
+                          Arx_MGE$wsnn_res.1.2 %in% c(20,18) ~ "Drd2+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(12,16,22,27) ~ "Non-MGE Lineage",
+                          Arx_MGE$wsnn_res.1.2 %in% c(5) ~ "Calb1+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(23) ~ "Tac1+",
+                          Arx_MGE$wsnn_res.1.2 %in% c(26) ~ "Chat+ Cholinergic Lingeage",
+                          Arx_MGE$wsnn_res.1.2 %in% c(17) ~ "Lhx8+/Gabra1+")
+                     
+Arx_MGE=AddMetaData(Arx_MGE,metadata=new_cell.type,col.name = "new_cell.type")
+DimPlot(Arx_MGE,reduction = 'wnn_umap', group.by ='new_cell.type')
+ggsave('cell_type_1.pdf',plot = last_plot(),device = 'pdf',width = 8,height = 5)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
