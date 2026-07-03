@@ -315,21 +315,104 @@ SST_COLS=c('deepskyblue','deepskyblue4','cyan','cyan4','aquamarine1','lightblue'
 ggplot(df_prop,aes(library_id,prop))+ geom_bar(aes(fill=cell.type),stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = SST_COLS)
 ggsave('SST_prop.pdf',plot = last_plot(),device = 'pdf')
 
+### DEG analysis ###
+obj_merged_sub$celltype_genotype <- paste(obj_merged_sub$cell.type, 
+                                obj_merged_sub$genotype, sep = "_")
+table(obj_merged_sub$celltype_genotype)
+Idents(obj_merged_sub) <- "celltype_genotype"
+obj_merged_sub$INs_genotype <- paste(obj_merged_sub$INs, 
+                                obj_merged_sub$genotype, sep = "_")
+table(obj_merged_sub$INs_genotype)
+Idents(obj_merged_sub) <- "INs_genotype"
+#PV DEGs
+PV_de<-FindMarkers(obj_merged_sub, verbose = F, test.use = "wilcox", 
+                          ident.1 = "PV_wt", 
+                          ident.2 = "PV_Het",assay = 'RNA')
+alpha = 10e-6
+PV_de = PV_de %>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2)%>% mutate(1:nrow(.))
+write.csv(PV_de, here('PV_de.csv'))
+# Volcano plot
+EnhancedVolcano(PV_de,
+                lab = rownames(PV_de),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = c(''),
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-6,
+                FCcutoff = 0.2,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-3, 3))
+ggsave('pv_de_ctx.pdf',plot = last_plot(),device = 'pdf')
+# SST DEGs
+SST_de<-FindMarkers(obj_merged_sub, verbose = F, test.use = "wilcox", 
+                          ident.1 = "SST_wt", 
+                          ident.2 = "SST_Het",assay = 'RNA')
+alpha = 10e-6
+SST_de = SST_de %>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2)%>% mutate(1:nrow(.))
+write.csv(SST_de, here('SST_de.csv'))
+# Voclano plot
+EnhancedVolcano(SST_de,
+                lab = rownames(SST_de),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = rownames(SST_de)[1:20],
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-6,
+                FCcutoff = 0.2,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-3, 3))
+ggsave('SST_de_ctx.pdf',plot = last_plot(),device = 'pdf')
+saveRDS(PV,'PV.rds')
+saveRDS(SST,'SST.rds')
 
+### DEP analysis ###
+DefaultAssay(PV)='peaks'
+Idents(PV) <- "genotype"
+PV_de_atac<-FindMarkers(PV, verbose = F, test.use = "wilcox", 
+                          ident.1 = "wt", 
+                          ident.2 = "Het",assay = 'peaks')
+alpha = 10e-6
+PV_de_atac = PV_de_atac %>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2)%>% mutate(1:nrow(.))%>% dplyr::filter(signif)
 
+#annotation peaks
+pv_peaks_signif=ClosestFeature(PV, regions = rownames(PV_de_atac))
+write.csv(pv_peaks_signif, here('pv_peaks_signif.csv'))
+#
+DefaultAssay(SST)='peaks'
+Idents(SST) <- "genotype"
+SST_de_atac<-FindMarkers(SST, verbose = F, test.use = "wilcox", 
+                          ident.1 = "wt", 
+                          ident.2 = "Het",assay = 'peaks')
+alpha = 10e-6
+SST_de_atac = SST_de_atac %>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha&abs(avg_log2FC)>0.2)%>% mutate(1:nrow(.))%>% dplyr::filter(signif)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#annotation peaks
+SST_peaks_signif=ClosestFeature(SST, regions = rownames(SST_de_atac))
+write.csv(SST_peaks_signif, here('sst_peaks_signif.csv'))
 
