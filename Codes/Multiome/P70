@@ -17,24 +17,303 @@ library(EnhancedVolcano)
 library(Signac)
 library(tidyverse)
 library(EnsDb.Mmusculus.v79)
+library(biovizBase)
 options(timeout = 1000)
-# input datasets
 
+###loading###
+#input 'filtered_feature_bc_matrix' from 10x cellranger aggr output, RNA assay
+counts_fn=here('filtered_feature_bc_matrix')
+dir.exists(counts_fn)
+counts=Read10X(data.dir = counts_fn)[["Gene Expression"]]
+counts[1:5,1:5]
+metadata_fn=here('aggr.csv')
+file.exists(metadata_fn)
+meta=read.csv(metadata_fn)%>% 
+  mutate(Sample=1:nrow(.))
+head(meta)
+#creat object and QC
+ind=str_split(colnames(counts),"-",simplify = TRUE)[,2]%>%as.numeric()
+meta.data=meta[match(ind,meta$Sample),]
+obj=CreateSeuratObject(counts = counts,meta.data = meta.data)
+obj 
+table(str_split(Cells(obj),"-",simplify = TRUE)[,2],obj$Sample)
+rm(counts);gc()
+# Post alignment QC
+obj[["percent.mt"]]=PercentageFeatureSet(obj,pattern = "^mt-")
+obj[["percent.ribo"]]=PercentageFeatureSet(obj,pattern="^Rp[sl]")
+Idents(obj)="library_id"
+#visualization
+VlnPlot(obj,features = 'nFeature_RNA',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Number of RNA feature')
+VlnPlot(obj,features = 'nCount_RNA',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Number of UMIs per cells')
+VlnPlot(obj,features = 'percent.mt',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Percent of Mitochondrial Reads')
+VlnPlot(obj,features = 'percent.ribo',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Percent of Ribosomal Reads')
+###first round###
+obj=subset(obj,percent.ribo<2&nFeature_RNA>1000&nFeature_RNA<7500&percent.mt<1&nCount_RNA<40000)
+Idents(obj)="library_id"
+VlnPlot(obj,features = 'nFeature_RNA',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Number of RNA feature')
+VlnPlot(obj,features = 'nCount_RNA',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Number of UMIs per cells')
+VlnPlot(obj,features = 'percent.mt',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Percent of Mitochondrial Reads')
+VlnPlot(obj,features = 'percent.ribo',ncol = 1,pt.size = 0)+
+  NoLegend()+ggtitle('Percent of Ribosomal Reads')
+#standard Seurat workflow
+options(future.globals.maxSize=15000*1024^2)
+options(future.rng.onMisuse='ignore')
+obj=NormalizeData(object = obj)
+obj=FindVariableFeatures(object = obj,nfeatures = 2000)
+obj=ScaleData(object = obj)
+obj=RunPCA(object = obj)
+#elbow plot
+ElbowPlot(obj, ndims = 50) + ggtitle('Elbowplot') +
+  geom_vline(xintercept = 10, linetype = 2, color = 'blue') +
+  geom_vline(xintercept = 30, linetype = 2, color = 'black') +
+  theme_minimal()#dim=30
+obj=FindNeighbors(object = obj,dim=1:30)
+obj=FindClusters(object = obj)
+obj=RunUMAP(object = obj,dims = 1:30)
+#visualization 
+Idents(obj)="library_id"
+DimPlot(obj,reduction = 'umap',pt.size = 0.3)+
+  ggtitle("UMAP clustering of all the data")
+DimPlot(obj,reduction = 'umap',pt.size = 0.3,group.by = 'genotype')+
+  ggtitle("UMAP clustering of all the data by genotype")
+save_obj=here('obj_RNA_ctx.rds')
+saveRDS(obj,save_obj)
 
+###loading###
+#input the peak x cell matrix from the from 10x cellranger aggr output, ATAC assay
+h5_fn = here("filtered_feature_bc_matrix.h5")
+file.exists(h5_fn)
+counts <- Read10X_h5(h5_fn)[['Peaks']]
+dim(counts) 
+head(counts[1:5, 1:5])
+# load sample level metadata
+metadata_fn = here('aggr.csv')
+file.exists(metadata_fn)
+meta = read.csv(metadata_fn) %>% 
+  mutate(Sample = 1:nrow(.)) %>% 
+  dplyr::select(-c(atac_fragments, per_barcode_metrics,gex_molecule_info ))
+head(meta, 2) 
+#convert the sample-wise metdata to cell-wise metadata
+ind = str_split(colnames(counts), "-", simplify = TRUE)[,2] %>% as.numeric()
+meta.data = meta[match(ind, meta$Sample),] 
+dim(meta.data) 
 
+# create the chromatin assay object
+fragments_fn = here('atac_fragments.tsv.gz')
+file.exists(fragments_fn) 
+#"peak x cell" modality across the cells
+chrom_assay <- CreateChromatinAssay(
+  counts = counts,
+  sep = c(":", "-"),
+  genome = "mm10",
+  fragments = fragments_fn,
+  min.cells = 1)
+#using the ChromatinAssay,create Seurat object
+brain <- CreateSeuratObject(
+  counts = chrom_assay,
+  assay = 'peaks',
+  project = 'ATAC',
+  meta.data = meta.data, 
+  min.features = 1000)
+rm(chrom_assay, counts, meta.data)
+# extract gene annotations from EnsDb
+annotations <- GetGRangesFromEnsDb(ensdb = EnsDb.Mmusculus.v79)
+# change to UCSC style chromosome names
+seqlevels(annotations) <- paste0('chr', seqlevels(annotations))
+genome(annotations) <- "mm10"
+# add the gene information to the Signac object
+Annotation(brain) <- annotations
 
+#QC
+#Nucleosome signal
+brain <- NucleosomeSignal(object = brain)
+brain$nucleosome_group <- ifelse(brain$nucleosome_signal > 2, 'NS > 2', 'NS < 2')
+FragmentHistogram(object = brain, group.by = 'nucleosome_group', 
+                  region = 'chr1-1-10000000')
+#TSS enrichment
+brain <- TSSEnrichment(brain, fast = FALSE)
+brain$high.tss <- ifelse(brain$TSS.enrichment > 2, 'High', 'Low')
+TSSPlot(brain, group.by = 'high.tss') + NoLegend()
+#make the unique fragments by TSS plot
+ggplot(brain[[]], aes(x = nCount_peaks, y = TSS.enrichment)) +
+  geom_hex(bins = 200) +
+  geom_hline(yintercept = 2, linetype = 1, color = 'red') +
+  geom_vline(xintercept = 1000, linetype = 1, color = 'red') +
+  scale_x_continuous(trans = 'log10') +
+  scale_y_continuous(limits = c(0, 20)) +
+  scale_fill_viridis_c(option = 'A') +
+  theme_minimal()
+brain <- subset(brain,
+  subset = 
+    nCount_peaks > 1000 &
+    TSS.enrichment > 2 &
+    nucleosome_signal < 4)
+obj_atac=brain
+rm(brain);gc()
+#Dimensionality reduction and clustering
+obj_atac <- RunTFIDF(obj_atac)
+obj_atac <- FindTopFeatures(obj_atac, min.cutoff = 'q0')
+obj_atac <- RunSVD(object = obj_atac)
+DepthCor(obj_atac)
+dims = 2:30 # set the dimensions to exclude the first one
+obj_atac <- obj_atac %>% 
+  RunUMAP(reduction = 'lsi', dims = dims, verbose = F) %>% 
+  FindNeighbors( reduction = 'lsi', dims = dims) %>% 
+  FindClusters( verbose = F)
+# visualization
+DimPlot(object = obj_atac,reduction = 'umap',group.by = 'seurat_clusters', label = FALSE) 
+saveRDS(obj_atac, here('obj_atac_ctx.rds'))
 
+### Integrating RNA assay and ATAC assay ###
+# find the shared cells between the two datasets
+obj_rna=obj
+cells_shared = intersect(Cells(obj_rna), Cells(obj_atac))
+length(cells_shared)
+obj_merged = obj_rna[,cells_shared]
+obj_merged[['peaks']] = obj_atac[, cells_shared][['peaks']]
+obj_merged = AddMetaData(obj_merged, metadata =
+                           obj_atac[[]][,c('nCount_peaks', 'nFeature_peaks')])
+obj_merged
+# recompute the variation for each assay by recomputing the RNA & ATAC dimensionalty reduction
+DefaultAssay(obj_merged) = 'RNA'
+obj_merged = obj_merged %>% FindVariableFeatures(verbose = F) %>% 
+  ScaleData(verbose = F) %>% RunPCA(verbose = F) 
+DefaultAssay(obj_merged) = 'peaks'
+obj_merged = obj_merged %>% RunTFIDF(verbose = F) %>% 
+  FindTopFeatures(min.cutoff = 'q0', verbose = F) %>% RunSVD(verbose = F)
+DepthCor(obj_merged) 
+# FindMultiModalNeighbors
+obj_merged <- FindMultiModalNeighbors(
+  obj_merged, reduction.list = list("pca", "lsi"), dims.list = list(1:30, 2:30), 
+  modality.weight.name = c("RNA.weight", 'peaks.weight'))
+#calculate the joint UMAP and clustering using the WNN graph
+obj_merged <- RunUMAP(obj_merged, nn.name = "weighted.nn", verbose = F, 
+                      reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+obj_merged <- FindClusters(obj_merged, graph.name = "wsnn", verbose = F, cluster.name = 'joint_clusters',resolution = 1.2)
+# visualization
+cols_clust = obj_merged$joint_clusters %>% unique() %>% length() %>% DiscretePalette(palette = 'polychrome')
+DimPlot(obj_merged, group.by = 'library_id', reduction = 'wnn.umap', label = F,cols = cols_clust) 
+DimPlot(obj_merged, group.by = 'Sex', reduction = 'wnn.umap', label = F,cols =c('#9DDEFF','#FF8686'))
+DimPlot(obj_merged, group.by = 'Age', reduction = 'wnn.umap', label = F,cols =c('#6EB8AB','#E7B4FF'))
+DimPlot(obj_merged, group.by = 'tissue_age', reduction = 'wnn.umap', label = F) 
+DimPlot(obj_merged, group.by = 'genotype', reduction = 'wnn.umap', label = F, cols = c('red','green')) 
+DimPlot(obj_merged, reduction = 'wnn.umap', group.by = 'joint_clusters', label = TRUE) 
+saveRDS(obj_merged, 'obj_merged.rds')
 
+### subset obj_merged ###
+obj_merged=readRDS('obj_merged.rds')
+DimPlot(obj_merged, reduction = 'wnn.umap', group.by = 'joint_clusters', label = TRUE) 
+Idents(obj_merged)='joint_clusters'
+table(obj_merged$library_id,obj_merged$joint_clusters)
+exclud=c('20','21','19') # exclude clusters with few cells
+obj_merged_sub=subset(obj_merged, idents=exclud, invert=TRUE)
+table(obj_merged_sub$joint_clusters)
+# recompute the variation for each assay 
+DefaultAssay(obj_merged_sub) = 'RNA'
+obj_merged_sub = obj_merged_sub %>% FindVariableFeatures(verbose = F) %>% 
+  ScaleData(verbose = F) %>% RunPCA(verbose = F) 
+DefaultAssay(obj_merged_sub) = 'peaks'
+obj_merged_sub = obj_merged_sub %>% RunTFIDF(verbose = F) %>% 
+  FindTopFeatures(min.cutoff = 'q0', verbose = F) %>% RunSVD(verbose = F)
+obj_merged_sub <- FindMultiModalNeighbors(
+  obj_merged_sub, reduction.list = list("pca", "lsi"), dims.list = list(1:30, 2:30), 
+  modality.weight.name = c("RNA.weight", 'peaks.weight'))
+obj_merged_sub <- RunUMAP(obj_merged_sub, nn.name = "weighted.nn", verbose = F, 
+                      reduction.name = "wnn.umap", reduction.key = "wnnUMAP_")
+obj_merged_sub <- FindClusters(obj_merged_sub, graph.name = "wsnn", verbose = F, cluster.name = 'joint_clusters',resolution = 1.2)
+DimPlot(obj_merged_sub, reduction = 'wnn.umap', group.by = 'joint_clusters', label = TRUE) 
+ggsave('joint_clusters_filter.pdf',plot = last_plot(),device = 'pdf')
 
+### annotation ###
+#feature plot PV&SST interneurons subsets marker from published papers
+DefaultAssay(obj_merged_sub)='RNA'
+FeaturePlot(obj_merged_sub,reduction = 'wnn.umap',features = c('Unc5b','Col25a1','Rorb','Reln','Fzd6','Slc39a8','Th'))
+FeaturePlot(obj_merged_sub,reduction = 'wnn.umap',features = c('Mme','Calb2','Hpse','Syndig1l','Etv1','Chrna2','Crh',
+                                                               'Nmbr','Th','Chodl'))
 
+FeaturePlot(obj_merged_sub,reduction = 'wnn.umap',features = c('Calb2','Syndig1l','Chrna2','Crh','Nmbr','Hpse','Myof'))
+ggsave('sst_subset.pdf',plot = last_plot(),device = 'pdf')
+#Find cluster markers
+obj_merged_sub=JoinLayers(obj_merged_sub, assay ='RNA')
+obj_merged_sub
+Idents(obj_merged_sub)='joint_clusters'
+cluster_de<-FindAllMarkers(obj_merged_sub, verbose = F, test.use = "wilcox")
+cluster_de_1=cluster_de
+cluster_de_1 %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+# based on markers annotate cell types
+subset= case_when(obj_merged_sub$joint_clusters %in% c(13) ~ "PV_Unc5b",
+                        obj_merged_sub$joint_clusters  %in% c(1) ~ "PV_Col25a1",
+                        obj_merged_sub$joint_clusters  %in% c(0) ~ "PV_Reln",
+                        obj_merged_sub$joint_clusters  %in% c(3) ~ "PV_Fzd6",
+                        obj_merged_sub$joint_clusters  %in% c(5) ~ "PV_Slc39a8",
+                        obj_merged_sub$joint_clusters  %in% c(15) ~ "PV_Th",
+                        obj_merged_sub$joint_clusters  %in% c(4) ~ "PV_Rorb",
+                        obj_merged_sub$joint_clusters  %in% c(10) ~ "PV_Myof",
+                        obj_merged_sub$joint_clusters  %in% c(2) ~ "SST_Mme",
+                        obj_merged_sub$joint_clusters  %in% c(7) ~ "SST_Hpse",
+                        obj_merged_sub$joint_clusters  %in% c(14) ~ "SST_Etv1",
+                        obj_merged_sub$joint_clusters  %in% c(8) ~ "SST_Crh",
+                        obj_merged_sub$joint_clusters  %in% c(11) ~ "SST_Crhr2",
+                        obj_merged_sub$joint_clusters  %in% c(16) ~ "SST_Th",
+                        obj_merged_sub$joint_clusters  %in% c(17) ~ "SST_Chodl",
+                        obj_merged_sub$joint_clusters  %in% c(12) ~ "SST_Gulp1",
+                        obj_merged_sub$joint_clusters  %in% c(9) ~ "SST_Fibcd1",
+                        obj_merged_sub$joint_clusters  %in% c(6) ~ "SST_Plpp4",
+                        obj_merged_sub$joint_clusters  %in% c(18) ~ "Lamp5")
 
+obj_merged_sub=AddMetaData(obj_merged_sub,metadata = subset,col.name = 'cell.type')
+cols_clust = obj_merged_sub$cell.type %>% unique() %>% length() %>% DiscretePalette(palette = 'polychrome')
 
+INs=case_when(obj_merged_sub$joint_clusters %in% c(3,15,5,10,0,4,1,13) ~ "PV",
+                        obj_merged_sub$joint_clusters  %in% c(16,8,11,12,6,9,7,2,14,17) ~ "SST",
+                        obj_merged_sub$joint_clusters  %in% c(18) ~ "Lamp5")
+obj_merged_sub=AddMetaData(obj_merged_sub,metadata = INs,col.name = 'INs')
+# visualization
+DimPlot(obj_merged_sub, reduction = 'wnn.umap', group.by = 'INs', label = FALSE,cols =c('darkviolet','pink1','deepskyblue')) 
+ggsave('cell_type_INs.pdf',plot = last_plot(),device = 'pdf')
+COLS=c('darkviolet','#F66F69','#AB1D22','#DD7694','#FF73A4','#FFBAAB','firebrick2','darkorange','goldenrod1'
+       ,'deepskyblue','deepskyblue4','cyan','cyan4','aquamarine1','lightblue','lightcyan','darkseagreen','cadetblue1','steelblue')
+DimPlot(obj_merged_sub, reduction = 'wnn.umap', group.by = 'cell.type', label = TRUE,cols = COLS) 
+ggsave('cell_type_label.pdf',plot = last_plot(),device = 'pdf')
+DimPlot(obj_merged_sub, reduction = 'wnn.umap', group.by = 'library_id', label = FALSE,cols = c('#ab1d22','#ea5514','#457b9d')) 
+ggsave('ctx_umap_library_id.pdf',plot = last_plot(),device = 'pdf')
+saveRDS(obj_merged_sub, 'obj_merged_ctx_subset.rds')
 
+### Proportion analysis ###
+Idents(obj_merged_sub)='INs'
+PV=subset(obj_merged_sub,idents='PV')
+# pv_prop
+df_prop = PV[[]] %>% 
+  group_by(library_id, cell.type) %>% 
+  summarize(n = n()) %>% 
+  mutate(prop = n / sum(n)*100) %>% ungroup() %>% 
+  arrange(library_id, cell.type) 
+PV_COLS=c('#F66F69','#AB1D22','#DD7694','#FF73A4','#FFBAAB','firebrick2','darkorange','goldenrod1')
+ggplot(df_prop,aes(library_id,prop))+ geom_bar(aes(fill=cell.type),stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = PV_COLS)
+ggsave('PV_prop.pdf',plot = last_plot(),device = 'pdf')
 
+SST=subset(obj_merged_sub,idents='SST')
+# SST_prop
+df_prop = SST[[]] %>% 
+  group_by(library_id, cell.type) %>% 
+  summarize(n = n()) %>% 
+  mutate(prop = n / sum(n)*100) %>% ungroup() %>% 
+  arrange(library_id, cell.type) 
+SST_COLS=c('deepskyblue','deepskyblue4','cyan','cyan4','aquamarine1','lightblue','lightcyan','darkseagreen','cadetblue1','steelblue')
 
-
-
-
+ggplot(df_prop,aes(library_id,prop))+ geom_bar(aes(fill=cell.type),stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = SST_COLS)
+ggsave('SST_prop.pdf',plot = last_plot(),device = 'pdf')
 
 
 
