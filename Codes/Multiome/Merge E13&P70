@@ -1,1 +1,88 @@
+library(SingleCellExperiment)
+library(Seurat)
+library("tidyverse")
+library(ggplot2)
+library(presto)
+library(patchwork)
+library(dplyr)
+library(Signac)
+library(tidyverse)
+library(EnsDb.Mmusculus.v79)
+
+### merge E13.5 AND P70 RNA assay ###
+# input objects
+E13=readRDS('Arx_filter.rds')
+P70=readRDS('obj_merged_ctx_subset.rds')
+#extract RNA assay
+E13$age='E13.5'
+E13_RNA <- DietSeurat(
+  object = E13,
+  assays = "Gene.Expression",
+  dimreducs = NULL,   
+  graphs = NULL)
+E13_RNA <- RenameAssays(object = E13_RNA,Gene.Expression = "RNA")#rename assay
+
+P70_RNA=DietSeurat(P70, assays = 'RNA',dimreducs = NULL, graphs = NULL)
+#merge RNA assay
+obj=merge(E13_RNA,y=P70_RNA,add.cell.ids=c('E13','P70'))
+
+options(future.globals.maxSize=15000*1024^2) 
+options(future.rng.onMisuse='ignore')
+# Standard Seurat workflow
+obj=NormalizeData(object = obj)
+obj=FindVariableFeatures(object = obj,nfeatures = 2000)
+obj=ScaleData(object = obj)
+obj=RunPCA(object = obj)
+obj=FindNeighbors(object = obj,dim=1:30)
+obj=FindClusters(object = obj)
+obj=RunUMAP(object = obj,dims = 1:30)
+# visualization
+RNA=obj
+DimPlot(RNA,reduction = 'umap',group.by = 'library_id',cols = c('#7a81ff','#ff7e79','#76d6ff','#ff8ad8','#ab1d22',
+                                                                '#ea5514','#457b9d'))
+ggsave('RNA_merge_be_id.pdf',plot = last_plot(),device = 'pdf',width = 10)
+FeaturePlot(RNA,reduction = 'umap',features =c('Nes','Ccnd2','Dcx','Vim'),cols = c('#f6f5ee','springgreen4'))
+ggsave('RNA_merge_markers.pdf',plot = last_plot(),device = 'pdf',width = 10)
+FeaturePlot(RNA,reduction = 'umap',features =c('Pvalb','Sst'),cols = c('#f6f5ee','springgreen4'))
+ggsave('RNA_merge_markers.pdf',plot = last_plot(),device = 'pdf',width = 10)
+saveRDS(obj,'RNA_E13_P70_obj.rds')
+
+### merge E13.5 AND P70 ATAC assay ###
+#extract ATAC assay
+DefaultAssay(E13)='Peaks'
+E13_ATAC <- DietSeurat(object = E13,assays = "Peaks",dimreducs = NULL,graphs = NULL)
+E13_ATAC <- RenameAssays(object = E13_ATAC,Peaks = "peaks")#rename assay
+DefaultAssay(P70)='peaks'
+P70_ATAC=DietSeurat(P70, assays = 'peaks',dimreducs = NULL, graphs = NULL)
+#change fragemnt path
+head(E13_ATAC)
+colnames(E13_ATAC) <- sub("^.*_", "", colnames(E13_ATAC))
+Fragments(E13_ATAC[["peaks"]]) <- CreateFragmentObject(
+  path = "E13_ATAC/atac_fragments.tsv.gz",
+  cells = colnames(E13_ATAC))
+#delete previous fragment path and add key
+E13_ATAC[["peaks"]]@fragments <- E13_ATAC[["peaks"]]@fragments[-1]
+E13_ATAC[["peaks"]]@key="peaks_"
+
+head(P70_ATAC)
+# merge E13&P70
+obj_atac=merge(E13_ATAC,y=P70_ATAC)
+options(future.globals.maxSize=15000*1024^2)
+options(future.rng.onMisuse='ignore')
+#Dimensionality reduction and clustering
+obj_atac <- RunTFIDF(obj_atac)
+obj_atac <- FindTopFeatures(obj_atac, min.cutoff = 'q0')
+obj_atac <- RunSVD(object = obj_atac)
+
+DepthCor(obj_atac)
+dims = 2:30 
+obj_atac <- obj_atac %>% 
+  RunUMAP(reduction = 'lsi', dims = dims, verbose = F) %>% 
+  FindNeighbors( reduction = 'lsi', dims = dims) %>% 
+  FindClusters( verbose = F)
+# visualization
+DimPlot(ATAC,reduction = 'umap',group.by = 'library_id',
+            cols = c('#7a81ff','#ff7e79','#76d6ff','#ff8ad8','#ab1d22','#ea5514','#457b9d'))
+ggsave('ATAC_merge_by_id.pdf',plot = last_plot(),device = 'pdf',width = 10)
+saveRDS(obj_atac,'ATAC_E13_P70_obj.rds')
 
