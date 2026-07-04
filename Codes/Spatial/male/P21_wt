@@ -178,6 +178,10 @@ wt_hippo <- ProjectData(
   umap.model = "umap.hippo.sketch",
   dims = 1:30,
   refdata = list(full_first_type = "first_type"))
+
+# keep hippocampal domain/cell types
+Idents(wt_hippo) <- "full_first_type"
+wt_hippo=subset(wt_hippo, idents=c('Astro','CA1-ProS','CA2-IG-FC','CA3','DG','Lamp5','Oligo','Pvalb','Sncg','Sst'))
+SpatialDimPlot(wt_hippo, group.by = "full_first_type", label = T,label.size = 1.5)
+ImageDimPlot(wt_hippo, group.by = "full_first_type")
 saveRDS(wt_hippo, '~/p21_wt_hippo.rds')
-
-
