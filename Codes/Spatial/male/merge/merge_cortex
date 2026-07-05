@@ -100,81 +100,57 @@ vln.plot <- VlnPlot(Arx_male, features = "nCount_Spatial.008um", pt.size = 0) + 
 vln.plot
 ggsave('~/male_all/vlnplot.pdf',device = 'pdf',plot = last_plot())
 # QC
-Arx_male=subset(Arx_male,subset=nCount_Spatial.008um<1700& nCount_Spatial.008um>50)
+Arx_male=subset(Arx_male,subset=nCount_Spatial.008um<1700& nCount_Spatial.008um>100)
 VlnPlot(Arx_male, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
 ggsave('~/male_all/qc.pdf',device = 'pdf',plot = last_plot())
+
+# only keep spot_class = singlet to remove mixed cell types
+Idents(Arx_male)='spot_class'
+Arx_male_ctx=subset(Arx_male_ctx, idents='singlet')
 saveRDS(Arx_male, '~/male_all/Arx_male_cortex_qc_1.rds')
 
-### strandard seurat workflow ###
-#normalized
+### clustering ###
 options(future.globals.maxSize = 300000 * 1024^2)
 DefaultAssay(Arx_male) <- "Spatial.008um"
 Arx_male <- NormalizeData(Arx_male)
 Arx_male <- FindVariableFeatures(Arx_male)
 Arx_male <- ScaleData(Arx_male)
-# sketch assay
-Arx_male <- SketchData(
-  object = Arx_male,
-  ncells = 50000,
-  method = "LeverageScore",
-  sketched.assay = "sketch")
-
-# switch analysis to sketched cells
-DefaultAssay(Arx_male) <- "sketch"
-Arx_male <- FindVariableFeatures(Arx_male)
-Arx_male <- ScaleData(Arx_male)
-Arx_male <- RunPCA(Arx_male, assay = "sketch", reduction.name = "pca.sketch")
-Arx_male <- FindNeighbors(Arx_male, assay = "sketch", reduction = "pca.sketch", dims = 1:50)
-Arx_male<- FindClusters(Arx_male, cluster.name = "seurat_cluster.sketched", resolution = 3)
-Arx_male<- RunUMAP(Arx_male, reduction = "pca.sketch", reduction.name = "umap.sketch", return.model = T, dims = 1:50,spread=1.5)
-
-# visualization
-DimPlot(Arx_male,reduction = 'umap.sketch',group.by = 'full_first_type',label = FALSE,label.size = 3,raster = FALSE)+ NoLegend()
-colnames(Arx_male@meta.data)#check metadata structure
-
-Arx_male$age_genotype=paste0(Arx_male$age,sep='_',Arx_male$genotype)
-Arx_male$library_id=paste0(Arx_male$age_genotype,sep='_',Arx_male$sex)
-
-DimPlot(Arx_male,reduction = 'umap.sketch',split.by = 'library_id',label = TRUE,label.size = 3)
-ggsave('~/dimplot_sketch_samples.pdf',device = 'pdf',plot = last_plot(),width = 25)
-
-#Project Data
-Arx_male <- ProjectData(
-  object = Arx_male,
-  assay = "Spatial.008um",
-  full.reduction = "full.pca.sketch",
-  sketched.assay = "sketch",
-  sketched.reduction = "pca.sketch",
-  umap.model = "umap.sketch",
-  dims = 1:50,
-  refdata = list(seurat_cluster.projected = "seurat_cluster.sketched"))
-
-# visualization
+Arx_male <- RunPCA(Arx_male, assay = "Spatial.008um", reduction.name = "pca.ctx")
+Arx_male <- FindNeighbors(Arx_male, assay = "Spatial.008um", reduction = "pca.ctx", dims = 1:50)
+Arx_male<- FindClusters(Arx_male, cluster.name = "seurat_cluster", resolution = 3)
+Arx_male<- RunUMAP(Arx_male, reduction = "pca.ctx", reduction.name = "umap.ctx", return.model = T, dims = 1:50)
+DimPlot(Arx_male,reduction = 'umap.ctx',group.by = 'full_first_type',label = FALSE,label.size = 3,raster = FALSE)+ NoLegend()
+#subset
+Arx_male=JoinLayers(Arx_male, assay ='Spatial.008um')
 DefaultAssay(Arx_male) <- "Spatial.008um"
-level1=c('Micro-PVM','Astro','Oligo','L2 IT ENTl','L2 IT ENTm','L2-3 IT CTX',
-        'L2-3 IT ENTl','L2-3 IT PPP','L2-3 IT RHP','L3 IT ENT','L4-5 IT CTX',
-        'L5 IT CTX','L5-6 IT TPE-ENT','L6 IT CTX','L6 IT ENTl','Car3','L5 PT CTX',
-        'L4 RSP-ACA','L5 PPP','L5-6 NP CTX','NP SUB','NP PPP','L6 CT CTX','CT SUB',
-        'L6b-CT ENT','L6b CTX','CR','Lamp5','Sncg','Vip','Pvalb','Sst','Sst Chodl')
+Idents(Arx_male)='full_first_type'
+# flitered low cell number cell type
+exclude=c('Micro-PVM','L2 IT ENTm','L2-3 IT RHP','L3 IT ENT','L5 PPP','NP SUB','NP PPP','CT SUB','L6b-CT ENT')
+Arx_male=subset(Arx_female,ident=exclude, invert=TRUE)
+
+# visualization
+level1=c('Astro','Oligo','L2 IT ENTl','L2-3 IT CTX','L2-3 IT ENTl','L2-3 IT PPP','L4-5 IT CTX','L5 IT CTX','L5-6 IT TPE-ENT',
+      'L6 IT CTX','L6 IT ENTl','Car3','L5 PT CTX','L4 RSP-ACA','L5-6 NP CTX','L6 CT CTX','L6b CTX','Lamp5','Sncg','Vip','Pvalb','Sst','Sst Chodl')
 
 Arx_male$full_first_type <- factor(Arx_male$full_first_type, levels = level1)
 Arx_male_ctx=Arx_male
 cols=DiscretePalette(length(unique(Arx_male_ctx$full_first_type)),'polychrome')
-
-DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',label = FALSE,label.size = 3,cols = cols)+NoLegend()
-DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',label = TRUE,label.size = 3,cols = cols,raster = FALSE)+NoLegend()
-DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',split.by = 'library_id',label = TRUE,label.size = 3,cols = cols,raster = FALSE)+NoLegend()
-DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',split.by = 'library_id',label = FALSE,cols = cols,raster = FALSE)+NoLegend()
-DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',split.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE,cols = cols)
-ggsave('~/dimplot_full_first_type_library_2.pdf',device = 'pdf',plot = last_plot(),width = 25)
-ggsave('~/dimplot_full_first_type_library_nolabel.pdf',device = 'pdf',plot = last_plot(),width = 25)
+DimPlot(Arx_male_ctx,reduction = 'umap.ctx',group.by = 'full_first_type',label = FALSE,label.size = 3,cols = cols)
+DimPlot(Arx_male_ctx,reduction = 'umap.ctx',group.by = 'full_first_type',split.by = 'library_id',label = TRUE,label.size = 3,cols = cols,raster = FALSE)+NoLegend()
 
 ImageDimPlot(Arx_male_ctx, cols =cols, group.by = 'full_first_type',fov = c('slice1.008um','slice1.008um.2'))
-ggsave('~/imageplot_type_p42.pdf',device = 'pdf',plot = last_plot(),width = 14)
 ImageDimPlot(Arx_male_ctx, cols =cols, group.by = 'full_first_type',fov = c('tissue_hires_image.png.008um','tissue_hires_image.png.008um.4'))
-ggsave('~/imageplot_type_p16.pdf',device = 'pdf',plot = last_plot(),width = 14)
 ImageDimPlot(Arx_male_ctx, cols =cols, group.by = 'full_first_type',fov = c('tissue_hires_image.png.008um.5','tissue_hires_image.png.008um.6'))
-ggsave('~/imageplot_type_p21.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+
+
+
+
+
+
+
+
+
 
 ### group full first type to cell type ###
 Idents(Arx_male_ctx) <- "full_first_type"
