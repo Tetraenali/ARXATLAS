@@ -1,0 +1,332 @@
+library(Seurat)
+library(future)
+library(here)
+library(tidyverse)
+library(SeuratObject)
+library(ggplot2)
+library(presto)
+library(patchwork)
+library(dplyr)
+library(EnhancedVolcano)
+library(EnsDb.Mmusculus.v79)
+library(clusterProfiler)
+library("org.Mm.eg.db")
+library(enrichplot)
+library(MASS)
+library(sctransform)
+library(RColorBrewer)
+options(timeout = 1000)
+
+### input P16, P21 and P42 pre-processed data of both wt and cKO cortex###
+#load data (the names of path or object maybe adjust compared with previous output)
+#P42
+wt_6w_cortex=readRDS('~/wt_cortex.rds')
+fl_6w_cortex=readRDS('~/fl_cortex.rds')
+DefaultAssay(wt_6w_cortex)='Spatial.008um'
+table(wt_6w_cortex$full_first_type)
+DefaultAssay(fl_6w_cortex)='Spatial.008um'
+table(fl_6w_cortex$full_first_type)
+#P16
+wt_p16_cortex=readRDS('~/P16/wt_y_cortex.rds')
+fl_p16_cortex=readRDS('~/P16/fl_y_cortex.rds')
+DefaultAssay(wt_p16_cortex)='Spatial.008um'
+table(wt_p16_cortex$full_first_type)
+DefaultAssay(fl_p16_cortex)='Spatial.008um'
+table(fl_p16_cortex$full_first_type)
+#P21
+wt_p21_cortex=readRDS('~/P21_wt_y_cortex.rds')
+fl_p21_cortex=readRDS('~/P21_fl_y_cortex.rds')
+DefaultAssay(wt_p21_cortex)='Spatial.008um'
+table(wt_p21_cortex$full_first_type)
+DefaultAssay(fl_p21_cortex)='Spatial.008um'
+table(fl_p21_cortex$full_first_type)
+
+#add genotype and age, sex
+wt_6w_cortex$genotype='wt'
+fl_6w_cortex$genotype='fl'
+wt_p16_cortex$genotype='wt'
+fl_p16_cortex$genotype='fl'
+wt_p21_cortex$genotype='wt'
+fl_p21_cortex$genotype='fl'
+
+wt_6w_cortex$age='P42'
+fl_6w_cortex$age='P42'
+wt_p16_cortex$age='P16'
+fl_p16_cortex$age='P16'
+wt_p21_cortex$age='P21'
+fl_p21_cortex$age='P21'
+
+wt_6w_cortex$sex='male'
+fl_6w_cortex$sex='male'
+wt_p16_cortex$sex='male'
+fl_p16_cortex$sex='male'
+wt_p21_cortex$sex='male'
+fl_p21_cortex$sex='male'
+
+# filter low cell numbers cell types of cortex and non cortex domain, keep consist across all samples 
+#P42 subset
+Idents(wt_6w_cortex) <- "full_first_type"
+CTX=c('CA1-ProS','CA2-IG-FC','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','SUB-ProS','CR')
+wt_6w_cortex=subset(wt_6w_cortex, idents=CTX, invert=TRUE)
+table(wt_6w_cortex$full_first_type)
+
+Idents(fl_6w_cortex) <- "full_first_type"
+fl_6w_cortex=subset(fl_6w_cortex, idents=CTX, invert=TRUE)
+table(fl_6w_cortex$full_first_type)
+
+#P16 subset
+Idents(wt_p16_cortex) <- "full_first_type"
+wt_p16_cortex=subset(wt_p16_cortex, idents=CTX, invert=TRUE)
+table(wt_p16_cortex$full_first_type)
+
+Idents(fl_p16_cortex) <- "full_first_type"
+fl_p16_cortex=subset(fl_p16_cortex, idents=CTX, invert=TRUE)
+table(fl_p16_cortex$full_first_type)
+
+#P21 subset
+Idents(wt_p21_cortex) <- "full_first_type"
+wt_p21_cortex=subset(wt_p21_cortex, idents=CTX, invert=TRUE)
+table(wt_p21_cortex$full_first_type)
+
+Idents(fl_p21_cortex) <- "full_first_type"
+fl_p21_cortex=subset(fl_p21_cortex, idents=CTX, invert=TRUE)
+table(fl_p21_cortex$full_first_type)
+
+### merge all samples and perform QC ###
+Arx_male=merge(wt_6w_cortex,y=c(fl_6w_cortex,wt_p16_cortex,fl_p16_cortex,wt_p21_cortex,fl_p21_cortex),
+              add.cell.ids = c("wt1", "fl1", "wt2","fl2","wt3","fl3"))
+
+vln.plot <- VlnPlot(Arx_male, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+vln.plot
+ggsave('~/male_all/vlnplot.pdf',device = 'pdf',plot = last_plot())
+# QC
+Arx_male=subset(Arx_male,subset=nCount_Spatial.008um<1700& nCount_Spatial.008um>50)
+VlnPlot(Arx_male, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+ggsave('~/male_all/qc.pdf',device = 'pdf',plot = last_plot())
+saveRDS(Arx_male, '~/male_all/Arx_male_cortex_qc_1.rds')
+
+### strandard seurat workflow ###
+#normalized
+options(future.globals.maxSize = 300000 * 1024^2)
+DefaultAssay(Arx_male) <- "Spatial.008um"
+Arx_male <- NormalizeData(Arx_male)
+Arx_male <- FindVariableFeatures(Arx_male)
+Arx_male <- ScaleData(Arx_male)
+# sketch assay
+Arx_male <- SketchData(
+  object = Arx_male,
+  ncells = 50000,
+  method = "LeverageScore",
+  sketched.assay = "sketch")
+
+# switch analysis to sketched cells
+DefaultAssay(Arx_male) <- "sketch"
+Arx_male <- FindVariableFeatures(Arx_male)
+Arx_male <- ScaleData(Arx_male)
+Arx_male <- RunPCA(Arx_male, assay = "sketch", reduction.name = "pca.sketch")
+Arx_male <- FindNeighbors(Arx_male, assay = "sketch", reduction = "pca.sketch", dims = 1:50)
+Arx_male<- FindClusters(Arx_male, cluster.name = "seurat_cluster.sketched", resolution = 3)
+Arx_male<- RunUMAP(Arx_male, reduction = "pca.sketch", reduction.name = "umap.sketch", return.model = T, dims = 1:50,spread=1.5)
+
+# visualization
+DimPlot(Arx_male,reduction = 'umap.sketch',group.by = 'full_first_type',label = FALSE,label.size = 3,raster = FALSE)+ NoLegend()
+colnames(Arx_male@meta.data)#check metadata structure
+
+Arx_male$age_genotype=paste0(Arx_male$age,sep='_',Arx_male$genotype)
+Arx_male$library_id=paste0(Arx_male$age_genotype,sep='_',Arx_male$sex)
+
+DimPlot(Arx_male,reduction = 'umap.sketch',split.by = 'library_id',label = TRUE,label.size = 3)
+ggsave('~/dimplot_sketch_samples.pdf',device = 'pdf',plot = last_plot(),width = 25)
+
+#Project Data
+Arx_male <- ProjectData(
+  object = Arx_male,
+  assay = "Spatial.008um",
+  full.reduction = "full.pca.sketch",
+  sketched.assay = "sketch",
+  sketched.reduction = "pca.sketch",
+  umap.model = "umap.sketch",
+  dims = 1:50,
+  refdata = list(seurat_cluster.projected = "seurat_cluster.sketched"))
+
+# visualization
+DefaultAssay(Arx_male) <- "Spatial.008um"
+level1=c('Micro-PVM','Astro','Oligo','L2 IT ENTl','L2 IT ENTm','L2-3 IT CTX',
+        'L2-3 IT ENTl','L2-3 IT PPP','L2-3 IT RHP','L3 IT ENT','L4-5 IT CTX',
+        'L5 IT CTX','L5-6 IT TPE-ENT','L6 IT CTX','L6 IT ENTl','Car3','L5 PT CTX',
+        'L4 RSP-ACA','L5 PPP','L5-6 NP CTX','NP SUB','NP PPP','L6 CT CTX','CT SUB',
+        'L6b-CT ENT','L6b CTX','CR','Lamp5','Sncg','Vip','Pvalb','Sst','Sst Chodl')
+
+Arx_male$full_first_type <- factor(Arx_male$full_first_type, levels = level1)
+Arx_male_ctx=Arx_male
+cols=DiscretePalette(length(unique(Arx_male_ctx$full_first_type)),'polychrome')
+
+DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',label = FALSE,label.size = 3,cols = cols)+NoLegend()
+DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',label = TRUE,label.size = 3,cols = cols,raster = FALSE)+NoLegend()
+DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',split.by = 'library_id',label = TRUE,label.size = 3,cols = cols,raster = FALSE)+NoLegend()
+DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',split.by = 'library_id',label = FALSE,cols = cols,raster = FALSE)+NoLegend()
+DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'full_first_type',split.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE,cols = cols)
+ggsave('~/dimplot_full_first_type_library_2.pdf',device = 'pdf',plot = last_plot(),width = 25)
+ggsave('~/dimplot_full_first_type_library_nolabel.pdf',device = 'pdf',plot = last_plot(),width = 25)
+
+ImageDimPlot(Arx_male_ctx, cols =cols, group.by = 'full_first_type',fov = c('slice1.008um','slice1.008um.2'))
+ggsave('~/imageplot_type_p42.pdf',device = 'pdf',plot = last_plot(),width = 14)
+ImageDimPlot(Arx_male_ctx, cols =cols, group.by = 'full_first_type',fov = c('tissue_hires_image.png.008um','tissue_hires_image.png.008um.4'))
+ggsave('~/imageplot_type_p16.pdf',device = 'pdf',plot = last_plot(),width = 14)
+ImageDimPlot(Arx_male_ctx, cols =cols, group.by = 'full_first_type',fov = c('tissue_hires_image.png.008um.5','tissue_hires_image.png.008um.6'))
+ggsave('~/imageplot_type_p21.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+### group full first type to cell type ###
+Idents(Arx_male_ctx) <- "full_first_type"
+Arx_male_ctx$cell.type=Arx_male_ctx$full_first_type
+table(Arx_male_ctx$full_first_type)
+table(Arx_male_ctx$cell.type)
+
+# Convert factor to character vector
+Arx_male_ctx$cell.type <- as.character(Arx_male_ctx$cell.type)
+Idents(Arx_male_ctx) <- "cell.type"
+# Assign values
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L2 IT ENTl']='L2/3 IT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L2 IT ENTm']='L2/3 IT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L2-3 IT CTX']='L2/3 IT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L2-3 IT ENTl']='L2/3 IT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L2-3 IT PPP']='L2/3 IT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L2-3 IT RHP']='L2/3 IT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L3 IT ENT']='L2/3 IT'
+
+
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L4-5 IT CTX']='L4/5/6 IT Car3'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L5 IT CTX']='L4/5/6 IT Car3'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L5-6 IT TPE-ENT']='L4/5/6 IT Car3'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L6 IT CTX']='L4/5/6 IT Car3'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L6 IT ENTl']='L4/5/6 IT Car3'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='Car3']='L4/5/6 IT Car3'
+
+
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L5 PT CTX']='PT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L4 RSP-ACA']='PT'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L5 PPP']='PT'
+
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L5-6 NP CTX']='NP/CT/L6b'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='NP SUB']='NP/CT/L6b'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='NP PPP']='NP/CT/L6b'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L6 CT CTX']='NP/CT/L6b'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='CT SUB']='NP/CT/L6b'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L6b-CT ENT']='NP/CT/L6b'
+Arx_male_ctx$cell.type[Arx_male_ctx$cell.type=='L6b CTX']='NP/CT/L6b'
+
+table(Arx_male_ctx$cell.type)
+
+# Convert back to factor if needed
+Arx_male_ctx$cell.type <- as.factor(Arx_male_ctx$cell.type)
+
+#visualization
+level2=c('Astro','Micro-PVM','Oligo','L2/3 IT','L4/5/6 IT Car3','PT','NP/CT/L6b','Lamp5','Sncg','Vip','Pvalb','Sst','Sst Chodl')
+Arx_male_ctx$cell.type <- factor(Arx_male_ctx$cell.type, levels = level2)
+
+
+cols25=DiscretePalette(length(unique(Arx_male_ctx$cell.type)),'polychrome')
+
+DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'cell.type',,label = TRUE,label.size = 3,cols = cols25)+NoLegend()
+DimPlot(Arx_male_ctx,reduction = 'full.umap.sketch',group.by = 'cell.type',split.by = 'library_id',label = TRUE,label.size = 3,cols = cols25)
+ggsave('~/male_all/cell_type.pdf',device = 'pdf',plot = last_plot())
+ggsave('~/male_all/cell_type_library_1.pdf',device = 'pdf',plot = last_plot(),width = 25)
+saveRDS(Arx_male_ctx, '~/male_all/Arx_male_cortex_cell_type.rds')
+
+### only subset neuron types and normalized and clustering ###
+Arx_male_ctx=readRDS('~/male_all/Arx_male_cortex_cell_type.rds')
+# subset
+Idents(Arx_male_ctx)='cell.type'
+exclude=c('Astro','Micro-PVM','Oligo')
+neurons=subset(Arx_male_ctx, idents=exclude, invert=TRUE)
+# visualization
+col=colorRampPalette(brewer.pal(12,"Set3"))(14)
+Idents(neurons)='cell.type'
+ImageDimPlot(neurons,group.by = 'cell.type',fov = c('slice1.008um','slice1.008um.2')) #6week
+ImageDimPlot(neurons, group.by = 'cell.type',fov = c('tissue_hires_image.png.008um','tissue_hires_image.png.008um.4')) #p16
+saveRDS(neurons, '~/male_all/Arx_male_cortex_neurons.rds')
+# clustering
+options(future.globals.maxSize = 300000 * 1024^2)
+DefaultAssay(neurons) <- "Spatial.008um"
+neurons <- NormalizeData(neurons)
+neurons <- FindVariableFeatures(neurons)
+neurons <- ScaleData(neurons)
+neurons <- SketchData(
+  object = neurons,
+  ncells = 5000,
+  method = "LeverageScore",
+  sketched.assay = "sketch")
+
+# switch analysis to sketched cells
+DefaultAssay(neurons) <- "sketch"
+neurons <- FindVariableFeatures(neurons)
+neurons <- ScaleData(neurons)
+neurons <- RunPCA(neurons, assay = "sketch", reduction.name = "pca.sketch")
+neurons <- FindNeighbors(neurons, assay = "sketch", reduction = "pca.sketch", dims = 1:50)
+neurons<- FindClusters(neurons, cluster.name = "seurat_cluster.sketched", resolution = 3)
+neurons<- RunUMAP(neurons, reduction = "pca.sketch", reduction.name = "umap.sketch", return.model = T, dims = 1:50)
+
+#Project Data
+neurons <- ProjectData(
+  object = neurons,
+  assay = "Spatial.008um",
+  full.reduction = "full.pca.sketch",
+  sketched.assay = "sketch",
+  sketched.reduction = "pca.sketch",
+  umap.model = "umap.sketch",
+  dims = 1:50,
+  refdata = list(seurat_cluster.projected = "seurat_cluster.sketched"))
+
+# visualization
+col32=c("#5A5156","#E4E1E3","#F6222E","#FE00FA","#16FF32","#3283FE","#FEAF16","#B00068","#1CFFCE","#90AD1C","#2ED9FF","#DEA0FD","#AA0DFE","#F8A19F","#325A9B","#C4451C","#1C8356","#85660D","#B10DA1","#FBE426","#1CBE4F","#FA0087","#FC1CBF","#F7E1A0","#C075A6","#782AB6","#AAF400","#BDCDFF","#822E1C","#B5EFB5","#7ED7D1","#1C7F93")
+col29=c("#FE00FA","#16FF32","#3283FE","#FEAF16","#B00068","#1CFFCE","#90AD1C","#2ED9FF","#DEA0FD","#AA0DFE","#F8A19F","#325A9B","#C4451C","#1C8356","#85660D","#B10DA1","#FBE426","#1CBE4F","#FA0087","#FC1CBF","#F7E1A0","#C075A6","#782AB6","#AAF400","#BDCDFF","#822E1C","#B5EFB5","#7ED7D1","#1C7F93")
+DefaultAssay(neurons) <- "Spatial.008um"
+DimPlot(neurons,reduction = 'full.umap.sketch',group.by = 'full_first_type',label = TRUE,label.size = 3,raster = FALSE)
+
+### neuron proportion analysis ###
+# cell.type proportion
+df_prop = neurons[[]] %>% 
+  # group by animal ID and experimental variables we want to keep & cell type
+  group_by(age_genotype, cell.type) %>% 
+  # count the number of cells in each cell type
+  summarize(n = n()) %>% 
+  # calculate the proportion of each cell type in each animal
+  mutate(prop = n / sum(n)*100) %>% ungroup() %>% 
+  arrange(age_genotype, cell.type) %>% 
+  mutate(cell.type = factor(cell.type), 
+         age_genotype = factor(age_genotype, levels = c('P16_wt', 'P16_fl','P21_wt','P21_fl','P42_wt','P42_fl')))
+cols=DiscretePalette(length(unique(neurons$cell.type)),'polychrome')
+ggplot(df_prop,aes(age_genotype,prop))+ geom_bar(aes(fill=cell.type),stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = cols)
+
+# neurons prop full_first_type
+df_prop = neurons[[]] %>% 
+  # group by animal ID and experimental variables we want to keep & cell type
+  group_by(age_genotype, full_first_type) %>% 
+  # count the number of cells in each cell type
+  summarize(n = n()) %>% 
+  # calculate the proportion of each cell type in each animal
+  mutate(prop = n / sum(n)*100) %>% ungroup() %>% 
+  arrange(age_genotype, full_first_type) %>% 
+  mutate(full_first_type = factor(full_first_type), 
+         age_genotype = factor(age_genotype, levels = c('P16_wt', 'P16_fl','P21_wt','P21_fl','P42_wt','P42_fl')))
+
+ggplot(df_prop,aes(age_genotype,prop))+ geom_bar(aes(fill=full_first_type),
+        stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = col29)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
