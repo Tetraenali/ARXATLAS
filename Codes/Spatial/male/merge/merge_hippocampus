@@ -1,1 +1,289 @@
+library(Seurat)
+library(future)
+library(here)
+library(tidyverse)
+library(SeuratObject)
+library(ggplot2)
+library(presto)
+library(patchwork)
+library(dplyr)
+library(EnhancedVolcano)
+library(EnsDb.Mmusculus.v79)
+library(clusterProfiler)
+library("org.Mm.eg.db")
+library(enrichplot)
+library(MASS)
+library(sctransform)
+library(RColorBrewer)
+
+### input preprocessed hippocampal objects ###
+#names maybe adjust compared previous output
+wt_hip_p16=readRDS('~/Arx_VisiumHD/P16/wt_hippo.rds')
+fl_hip_p16=readRDS('~/Arx_VisiumHD/P16/fl_hippo.rds')
+wt_hip_p42=readRDS('~/wt_hippo_1124.rds')
+fl_hip_p42=readRDS('~/fl_hippo_1124.rds')
+wt_hip_p21=readRDS('~/p21_wt_hippo.rds')
+fl_hip_p21=readRDS('~/P21_fl_hippo.rds')
+# subset full_first_type, only keep main cell types, remove unknown
+Idents(wt_hip_p42) <- "full_first_type"
+wt_hip_p42=subset(wt_hip_p42, idents=c('Astro','CA1-ProS','CA2-IG-FC','CA3','DG','Lamp5','Oligo','Pvalb','Sncg','Sst'))
+Idents(fl_hip_p42) <- "full_first_type"
+fl_hip_p42=subset(fl_hip_p42, idents=c('Astro','CA1-ProS','CA2-IG-FC','CA3','DG','Lamp5','Oligo','Pvalb','Sncg','Sst'))
+# add metadata
+table(wt_hip_p16$full_first_type)
+table(wt_hip_p42$full_first_type)
+table(wt_hip_p21$full_first_type)
+table(fl_hip_p16$full_first_type)
+table(fl_hip_p42$full_first_type)
+table(fl_hip_p21$full_first_type)
+
+wt_hip_p16$genotype='wt'
+wt_hip_p42$genotype='wt'
+wt_hip_p21$genotype='wt'
+fl_hip_p16$genotype='fl'
+fl_hip_p42$genotype='fl'
+fl_hip_p21$genotype='fl'
+
+wt_hip_p42$age='P42'
+fl_hip_p42$age='P42'
+wt_hip_p16$age='P16'
+fl_hip_p16$age='P16'
+wt_hip_p21$age='P21'
+fl_hip_p21$age='P21'
+
+wt_hip_p42$sex='male'
+fl_hip_p42$sex='male'
+wt_hip_p16$sex='male'
+fl_hip_p16$sex='male'
+wt_hip_p21$sex='male'
+fl_hip_p21$sex='male'
+
+DefaultAssay(wt_hip_p42)='Spatial.008um'
+DefaultAssay(fl_hip_p42)='Spatial.008um'
+DefaultAssay(wt_hip_p16)='Spatial.008um'
+DefaultAssay(fl_hip_p16)='Spatial.008um'
+DefaultAssay(wt_hip_p21)='Spatial.008um'
+DefaultAssay(fl_hip_p21)='Spatial.008um'
+### merge all samples and QC ###
+Arx_male_hip=merge(wt_hip_p16,y=c(fl_hip_p16,wt_hip_p21,fl_hip_p21,wt_hip_p42,fl_hip_p42),add.cell.ids = c("1", "2", "3","4","5","6"))
+# QC
+vln.plot <- VlnPlot(Arx_male_hip, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+vln.plot
+ggsave('~/male_all/vlnplot_hip.pdf',device = 'pdf',plot = last_plot())
+# filter cells with low counts
+Arx_male_hip=subset(Arx_male_hip,subset=nCount_Spatial.008um<2500& nCount_Spatial.008um>50)
+VlnPlot(Arx_male_hip, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+Arx_male_hip=subset(Arx_male_hip,subset=nCount_Spatial.008um<2500& nCount_Spatial.008um>100)
+# only keep singlet from RCTD results
+table(Arx_male_hip$spot_class,Arx_male_hip$age_genotype)
+table(Arx_male_hip$cell.type,Arx_male_hip$age_genotype)
+Idents(Arx_male_hip)='spot_class'
+Arx_male_hip=subset(Arx_male_hip, idents='singlet')
+Arx_male_hip 
+# filter oligo due to the BANKSY method could not reliably separated the corpus callosum from the hippocampus in one sample
+DefaultAssay(Arx_male_hip)='Spatial.008um'
+Idents(Arx_male_hip)='full_first_type'
+Arx_male_hip=subset(Arx_male_hip, idents='Oligo',invert=TRUE)
+table(Arx_male_hip$full_first_type,Arx_male_hip$age_genotype)
+
+saveRDS(Arx_male_hip, '~/male_all/Arx_male_hip_qc.rds')
+
+### clustering ###
+#normalized
+options(future.globals.maxSize = 50000 * 1024^2)
+DefaultAssay(Arx_male_hip) <- "Spatial.008um"
+Arx_male_hip <- NormalizeData(Arx_male_hip)
+Arx_male_hip<- FindVariableFeatures(Arx_male_hip)
+Arx_male_hip <- ScaleData(Arx_male_hip)
+Arx_male_hip <- RunPCA(Arx_male_hip, reduction.name = "pca.hippo", verbose = T)
+Arx_male_hip<- FindNeighbors(Arx_male_hip, reduction = "pca.hippo", dims = 1:30)
+Arx_male_hip<- FindClusters(Arx_male_hip, cluster.name = "seurat_clusters")
+Arx_male_hip <- RunUMAP(Arx_male_hip, reduction = "pca.hippo", reduction.name = "umap.hippo", return.model = T, dims = 1:30, verbose = T)
+# add metadata
+DefaultAssay(Arx_male_hip) <- "Spatial.008um"
+table(Arx_male_hip$full_first_type)
+table(Arx_male_hip$cell.type)
+Arx_male_hip$cell.type=Arx_male_hip$full_first_type
+Arx_male_hip$age_genotype=paste(Arx_male_hip$age, sep = '_',Arx_male_hip$genotype ) 
+Arx_male_hip$library_id=paste(Arx_male_hip$age_genotype, sep = '_',Arx_male_hip$sex) 
+# visualization
+level1=c('Astro','CA1-ProS','CA2-IG-FC','CA3','DG','Pvalb','Sst','Sncg','Lamp5')
+Arx_male_hip$full_first_type <- factor(Arx_male_hip$full_first_type, levels = level1)
+Arx_male_hip$cell.type=Arx_male_hip$full_first_type 
+table(Arx_male_hip$full_first_type,Arx_male_hip$age_genotype)
+
+cols=c("#E4E1E3","#3283FE","#FEAF16","#B00068","#1C7","#90AD1C","#2ED9FF","#DEA0FD","#F8A19F","#325A9B")
+col2=c('#611300','#004776','#C33A00','#66ACCF','#E8A49A','#BAD4E6')
+DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'seurat_clusters',split.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE)
+DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE,cols = col2)
+DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'seurat_clusters',split.by = 'genotype',label = TRUE,label.size = 3,raster = FALSE)
+DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'full_first_type',split.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE,cols = cols)
+ggsave('0314/Arx_male_hip_dim_library.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(Arx_male_hip, cols =cols, group.by = 'full_first_type',fov = c('tissue_hires_image.png.008um','tissue_hires_image.png.008um.2'))#p16
+ggsave('~/Arx_male_hip_spatial_p16.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+ImageDimPlot(Arx_male_hip, cols =cols, group.by = 'full_first_type',fov = c('slice1.008um','slice1.008um.6'))#p42
+ggsave('~/Arx_male_hip_spatial_p42.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+ImageDimPlot(Arx_male_hip, cols =cols, group.by = 'full_first_type',size=1,fov = c('tissue_hires_image.png.008um.3','tissue_hires_image.png.008um.4'))#p21
+ggsave('~/Arx_male_hip_spatial_p21.pdf',device = 'pdf',plot = last_plot(),width = 14)
+saveRDS(Arx_male_hip, '~/male_all/Arx_male_hip.rds')
+
+### hip proportion analysis ###
+df_prop = Arx_male_hip[[]] %>% 
+  group_by(age_genotype, cell.type) %>% 
+  summarize(n = n()) %>% 
+  mutate(prop = n / sum(n)*100) %>% ungroup() %>% 
+  arrange(age_genotype, cell.type) %>% 
+  mutate(cell.type = factor(cell.type), 
+         age_genotype = factor(age_genotype, levels = c('P16_wt', 'P16_fl','P21_wt','P21_fl','P42_wt','P42_fl')))
+cols=DiscretePalette(length(unique(Arx_male_hip$cell.type)),'polychrome')
+ggplot(df_prop,aes(age_genotype,prop))+ geom_bar(aes(fill=cell.type),stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = cols)
+table(df_prop$genotype,df_prop$prop)
+write.csv(df_prop,'~/df_prop_male_hip.csv')
+ggsave('~/prop_cell.type_male_hip.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+### hippocampal DEG analysis ###
+#DE in celltypes between conditions
+# Get unique cell types
+table(Arx_male_hip$cell.type)
+level1=c('Astro','CA1-ProS','CA2-IG-FC','CA3','DG','Pvalb','Sst','Sncg','Lamp5')
+Arx_male_hip$full_first_type <- factor(Arx_male_hip$full_first_type, levels = level1)
+Arx_male_hip$cell.type=Arx_male_hip$full_first_type 
+
+cell_types <- unique(Arx_male_hip$cell.type)
+Idents(Arx_male_hip)='genotype'
+Arx_male_hip=JoinLayers(Arx_male_hip, assay ='Spatial.008um')
+# Create a list to store DE results
+dge_results <- list()
+
+# Loop through each cell type
+for (ct in cell_types) {
+  # Subset cells of this cell type
+  cells_ct <- WhichCells(Arx_male_hip, expression = cell.type == ct)
+  seurat_subset <- subset(Arx_male_hip, cells = cells_ct)
+  
+  # Perform DE between KO and WT within this cell type
+  de_result <- FindMarkers(
+    seurat_subset,
+    ident.1 = "wt",
+    ident.2 = "fl",
+    group.by = "genotype",
+    logfc.threshold = 0.2,
+    test.use = "wilcox"  
+  )
+  
+  # Save result with name of cell type
+  dge_results[[ct]] <- de_result
+}
+
+# View DE results for a specific cell type
+head(dge_results[["Pvalb"]])
+
+# Create a list to store filtered and labeled results
+combined_results <- list()
+for (ct in names(dge_results)) {
+  df <- dge_results[[ct]]
+  # Add cell type column
+  df$cell_type <- ct
+  # Filter for adjusted p-value < 0.05
+  df <- df[df$p_val_adj < 0.05, ]
+  # Add gene name as a column (rownames are gene names)
+  df$gene <- rownames(df)
+  # Append to list
+  combined_results[[ct]] <- df
+}
+
+# Combine all into one data frame
+all_filtered_dge <- do.call(rbind, combined_results)
+
+# Reorder columns for readability
+all_filtered_dge <- all_filtered_dge[, c("gene", "cell_type", colnames(all_filtered_dge)[!colnames(all_filtered_dge) %in% c("gene", "cell_type")])]
+write.csv(all_filtered_dge, 'all_filtered_dge_hip_male_0318.csv', row.names = FALSE)
+
+# visualization
+markers=all_filtered_dge
+#prepare data
+markers = markers %>% dplyr::filter(p_val_adj < 0.05) %>% dplyr::filter(abs(avg_log2FC) >= 0.2)
+scRNA.markers = markers
+scRNA.markers$label <- ifelse(scRNA.markers$avg_log2FC<0,"sigUp","sigDown")
+#topgene
+topgene <- scRNA.markers %>%
+group_by(cell_type) %>%
+top_n(n = 20, wt = avg_log2FC) %>%
+bind_rows(group_by(scRNA.markers, cell_type) %>%
+top_n(n = 20, wt = -avg_log2FC))
+
+# or label specific genes
+Interest=c('Gfap','Apod','Id3','Apoe','Bdnf','Ntrk2','Vgf','Nptx2','Sorcs3','Synpr','Cck','Fos','Calb2','Calb1','Nnat','Spock3')
+topgene <- scRNA.markers %>%
+  filter(gene %in% Interest) %>%
+  group_by(cell_type)
+
+#draw bar
+dfbar = scRNA.markers %>%
+group_by(cell_type) %>%
+summarise(low = round(min(avg_log2FC)-0.5),
+up = round(max(avg_log2FC)+0.5)) %>% mutate(cell_type = factor(cell_type, levels = level1)) %>%
+  arrange(cell_type)
+
+#add color bar and label
+
+#draw background
+p1=ggplot(scRNA.markers )+
+geom_col(aes(x = cell_type ,y = low),dfbar,
+fill = "#dcdcdc",alpha = 0.6)+
+geom_col(aes(x = cell_type ,y = up),dfbar,
+fill = "#dcdcdc",alpha = 0.6)+
+geom_jitter(aes(x = cell_type, y = avg_log2FC, color = label),scRNA.markers,
+size = 1,alpha=0.5,position = position_jitter(seed = 1234,width =0.4))+
+scale_color_manual(values = c("#0077c0","#c72d2e"))+
+theme_classic()
+p2=p1+geom_tile(aes(x = cell_type,y = 0,fill=cell_type),NULL,
+height = 0.5,show.legend = F,alpha = 0.5)+
+geom_text(aes(x= cell_type, y = 0, label = cell_type),NULL,
+size = 3,fontface = "bold")
+
+#add genes label
+p3 <- p2 +
+geom_text_repel(data=topgene,aes(x = cell_type,y = avg_log2FC,label =gene), position = position_jitter(width =0.4),size = 2,box.padding = unit(0.2, "lines"),point.padding = unit(0.3, "lines"),min.segment.length = 0,max.overlaps = 120,segment.size=0.5,segment.alpha = 0.7  )
+p3
+ggsave('de_male_hip_label_genes.pdf',device = 'pdf',plot = last_plot(),width = 14)
+#adjust plot
+p3 <- p3+
+labs(x = "CellType",y = "log2FoldChange",
+title = "Differential expression genes")+
+theme(
+plot.title = element_text(size = 14,color = "black",face = "bold"),
+axis.title = element_text(size = 12,color = "black",face = "bold"),
+axis.line.y = element_line(color = "black",linewidth = 0.8),
+axis.line.x = element_blank(),
+axis.text.x = element_blank(),
+axis.ticks.x = element_blank(),
+panel.grid = element_blank(),
+legend.position.inside  = c(0.98,0.96),
+legend.background = element_blank(),
+legend.title = element_blank(),
+legend.direction = "vertical",
+legend.justification = c(1,0),
+legend.text = element_text(size = 12)
+)+
+guides(color = guide_legend(override.aes = list(size = 4)))
+p3
+ggsave('de_male_hip_all_062426_1.pdf',device = 'pdf',plot = last_plot())
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
