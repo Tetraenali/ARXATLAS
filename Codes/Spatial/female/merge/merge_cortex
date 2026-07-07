@@ -1,1 +1,406 @@
+library(Seurat)
+library(here)
+library(tidyverse)
+#library(SeuratData)
+library(SeuratObject)
+library(ggplot2)
+library(presto)
+library(patchwork)
+library(dplyr)
+library(EnhancedVolcano)
+library(EnsDb.Mmusculus.v79)
+options(timeout = 1000)
+library(clusterProfiler)
+library("org.Mm.eg.db")
+library(enrichplot)
+library(sctransform)
+library(MASS)
+
+### merge all female cortex object that are generated from previous process ###
+### input datasets ###
+#P21 wt_wt rep1&2
+wt1_p21_ctx=readRDS('~/wt_wt_cortex_1.rds') # path was adjusted
+wt2_p21_ctx=readRDS('~/wt_wt_cortex_2.rds')
+
+#P21 fl_wt rep1&2
+fl1_p21_ctx=readRDS('~/fl_wt_cortex_1.rds')
+fl2_p21_ctx=readRDS('~/fl_wt_cortex_2.rds')
+
+#P120 wt_wt fl_wt rep1&2
+wt1_p120_ctx=readRDS('~/wt_wt_cortex_1.rds')
+fl1_p120_ctx=readRDS('~/fl_wt_cortex_1.rds')
+
+wt2_p120_ctx=readRDS('~/wt_wt_cortex_2.rds')
+fl2_p120_ctx=readRDS('~/fl_wt_cortex_2.rds')
+
+#add genotype and age, sex
+wt1_p21_ctx$genotype='wt_wt'
+wt2_p21_ctx$genotype='wt_wt'
+fl1_p21_ctx$genotype='fl_wt'
+fl2_p21_ctx$genotype='fl_wt'
+wt1_p120_ctx$genotype='wt_wt'
+wt2_p120_ctx$genotype='wt_wt'
+fl1_p120_ctx$genotype='fl_wt'
+fl2_p120_ctx$genotype='fl_wt'
+
+wt1_p21_ctx$age='P21'
+wt2_p21_ctx$age='P21'
+fl1_p21_ctx$age='P21'
+fl2_p21_ctx$age='P21'
+wt1_p120_ctx$age='P120'
+wt2_p120_ctx$age='P120'
+fl1_p120_ctx$age='P120'
+fl2_p120_ctx$age='P120'
+
+wt1_p21_ctx$sex='female'
+wt2_p21_ctx$sex='female'
+fl1_p21_ctx$sex='female'
+fl2_p21_ctx$sex='female'
+wt1_p120_ctx$sex='female'
+wt2_p120_ctx$sex='female'
+fl1_p120_ctx$sex='female'
+fl2_p120_ctx$sex='female'
+
+#
+DefaultAssay(wt1_p21_ctx)='Spatial.008um'
+DefaultAssay(wt2_p21_ctx)='Spatial.008um'
+DefaultAssay(fl1_p21_ctx)='Spatial.008um'
+DefaultAssay(fl2_p21_ctx)='Spatial.008um'
+
+DefaultAssay(wt1_p120_ctx)='Spatial.008um'
+DefaultAssay(wt2_p120_ctx)='Spatial.008um'
+DefaultAssay(fl1_p120_ctx)='Spatial.008um'
+DefaultAssay(fl2_p120_ctx)='Spatial.008um'
+
+#
+table(wt1_p21_ctx$full_first_type)
+table(wt2_p21_ctx$full_first_type)
+table(fl1_p21_ctx$full_first_type)
+table(fl2_p21_ctx$full_first_type)
+
+table(wt1_p120_ctx$full_first_type)
+table(wt2_p120_ctx$full_first_type)
+table(fl1_p120_ctx$full_first_type)
+table(fl2_p120_ctx$full_first_type)
+
+#P21 subset, only keep consist and mian ctx cell types 
+Idents(wt1_p21_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','SUB-ProS','CR')
+wt1_p21_ctx=subset(wt1_p21_ctx, idents=CTX, invert=TRUE)
+table(wt1_p21_ctx$full_first_type)
+
+Idents(wt2_p21_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA2-IG-FC','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','SUB-ProS','CR')
+wt2_p21_ctx=subset(wt2_p21_ctx, idents=CTX, invert=TRUE)
+table(wt2_p21_ctx$full_first_type)
+
+Idents(fl1_p21_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA3','Endo','SMC-Peri','Unknown','VLMC','CR')
+fl1_p21_ctx=subset(fl1_p21_ctx, idents=CTX, invert=TRUE)
+table(fl1_p21_ctx$full_first_type)
+
+Idents(fl2_p21_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA2-IG-FC','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','SUB-ProS','CR')
+fl2_p21_ctx=subset(fl2_p21_ctx, idents=CTX, invert=TRUE)
+table(fl2_p21_ctx$full_first_type)
+
+#P120 subset
+Idents(wt1_p120_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA2-IG-FC','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','CR')
+wt1_p120_ctx=subset(wt1_p120_ctx, idents=CTX, invert=TRUE)
+table(wt1_p120_ctx$full_first_type)
+
+Idents(wt2_p120_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA2-IG-FC','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','SUB-ProS','CR')
+wt2_p120_ctx=subset(wt2_p120_ctx, idents=CTX, invert=TRUE)
+table(wt2_p120_ctx$full_first_type)
+
+Idents(fl1_p120_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA2-IG-FC','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','SUB-ProS','CR')
+fl1_p120_ctx=subset(fl1_p120_ctx, idents=CTX, invert=TRUE)
+table(fl1_p120_ctx$full_first_type)
+
+Idents(fl2_p120_ctx) <- "full_first_type"
+CTX=c('CA1-ProS','CA2-IG-FC','CA3','DG','Endo','SMC-Peri','Unknown','VLMC','SUB-ProS','CR')
+fl2_p120_ctx=subset(fl2_p120_ctx, idents=CTX, invert=TRUE)
+table(fl2_p120_ctx$full_first_type)
+
+### merge all 8 samples and QC ###
+# merge
+Arx_female=merge(wt1_p21_ctx,y=c(wt2_p21_ctx,fl1_p21_ctx,fl2_p21_ctx,wt1_p120_ctx,wt2_p120_ctx,fl1_p120_ctx,fl2_p120_ctx),
+                add.cell.ids = c("wt1", 'wt2',"fl1", "fl2","wt3","wt4","fl3","fl4"))
+# QC_1
+vln.plot <- VlnPlot(Arx_female, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+vln.plot
+ggsave('~/vlnplot.pdf',device = 'pdf',plot = last_plot())
+Arx_female_qc=subset(Arx_female,subset=nCount_Spatial.008um<2500& nCount_Spatial.008um>50)
+VlnPlot(Arx_female_qc, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+# QC_2
+Arx_female=Arx_female_qc
+table(Arx_female$spot_class, Arx_female$genotype)
+Idents(Arx_female)='spot_class' # only keep singlet for downstream analysis 
+Arx_female=subset(Arx_female, idents='singlet')
+Arx_female=subset(Arx_female,subset=nCount_Spatial.008um<2500& nCount_Spatial.008um>100)
+Arx_female
+saveRDS(Arx_female, '~/female_all/Arx_female_cortex_qc.rds')
+
+### clustering ###
+options(future.globals.maxSize = 500000 * 1024^2)
+DefaultAssay(Arx_female) <- "Spatial.008um"
+Arx_female <- NormalizeData(Arx_female)
+Arx_female <- FindVariableFeatures(Arx_female)
+Arx_female <- ScaleData(Arx_female)
+
+Arx_female <- RunPCA(Arx_female, reduction.name = "pca.ctx")
+Arx_female <- FindNeighbors(Arx_female, reduction = "pca.ctx", dims = 1:50)
+Arx_female<- FindClusters(Arx_female, cluster.name = "seurat_clusters", resolution = 3)
+Arx_female<- RunUMAP(Arx_female, reduction = "pca.ctx", reduction.name = "umap.ctx", return.model = T, dims = 1:50)
+
+# add meta data
+Arx_female$age_genotype=paste0(Arx_female$age,sep='_',Arx_female$genotype)
+Arx_female$library_id=paste0(Arx_female$age_genotype,sep='_',Arx_female$sex)
+
+# subset cell types, remove low cell types with low cell numbers or not interest
+table(Arx_female$full_first_type,Arx_female$age_genotype)
+Idents(Arx_female)='full_first_type'
+exclude=c('Micro-PVM','L2 IT ENTm','L2-3 IT RHP','L3 IT ENT','L5 PPP','NP SUB','NP PPP','CT SUB','L6b-CT ENT')
+Arx_female=subset(Arx_female,ident=exclude, invert=TRUE)
+level1=c('Astro','Oligo','L2 IT ENTl','L2-3 IT CTX','L2-3 IT ENTl','L2-3 IT PPP','L4-5 IT CTX','L5 IT CTX',
+      'L5-6 IT TPE-ENT','L6 IT CTX','L6 IT ENTl','Car3','L5 PT CTX','L4 RSP-ACA','L5-6 NP CTX','L6 CT CTX',
+      'L6b CTX','Lamp5','Sncg','Vip','Pvalb','Sst','Sst Chodl')
+
+Arx_female$full_first_type <- factor(Arx_female$full_first_type, levels = level1)
+table(Arx_female$full_first_type,Arx_female$age_genotype)
+
+# visualization
+Arx_female_ctx=Arx_female
+cols=DiscretePalette(length(unique(Arx_female_ctx$full_first_type)),'polychrome')
+DimPlot(Arx_female_ctx,reduction = 'umap.ctx',group.by = 'full_first_type',split.by = 'genotype',label = FALSE,label.size = 3,cols = cols)
+ggsave('dimplot_femael_ctx_genotype.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+col2=c('#E8A49A','#004776','#C33A00','#66ACCF')
+DimPlot(Arx_female_ctx,reduction = 'umap.ctx',group.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE,cols = col2)
+ggsave('Arx_female_ctx_dim_library.pdf',device = 'pdf',plot = last_plot())
+DimPlot(Arx_female_ctx,reduction = 'umap.ctx',group.by = 'full_first_type',split.by = 'library_id',label = FALSE,cols = cols,raster = FALSE)+NoLegend()
+
+# spatial visualization
+ImageDimPlot(Arx_female_ctx, cols =cols, group.by = 'full_first_type',fov = c('wt.008um','fl.008um'))
+ggsave('imageplot_type_p21.pdf',device = 'pdf',plot = last_plot(),width = 14)
+ImageDimPlot(Arx_female_ctx, cols =cols, group.by = 'full_first_type',fov = c('wt.008um.2','fl.008um.4'))
+ggsave('imageplot_type_p21_1.pdf',device = 'pdf',plot = last_plot(),width = 14)
+ImageDimPlot(Arx_female_ctx, cols =cols, group.by = 'full_first_type',fov = c('wt.008um.5','fl.008um.7'))
+ggsave('imageplot_type_p120.pdf',device = 'pdf',plot = last_plot(),width = 14)
+ImageDimPlot(Arx_female_ctx, cols =cols, group.by = 'full_first_type',fov = c('wt.008um.6','fl.008um.8'))
+ggsave('imageplot_type_p120_1.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+### group cell types ###
+Idents(Arx_female_ctx) <- "full_first_type"
+Arx_female_ctx$cell.type=Arx_female_ctx$full_first_type
+table(Arx_female_ctx$full_first_type)
+table(Arx_female_ctx$cell.type)
+
+# Convert factor to character vector
+Arx_female_ctx$cell.type <- as.character(Arx_female_ctx$cell.type)
+Idents(Arx_female_ctx) <- "cell.type"
+# Assign values
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L2 IT ENTl']='L2/3 IT'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L2-3 IT CTX']='L2/3 IT'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L2-3 IT ENTl']='L2/3 IT'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L2-3 IT PPP']='L2/3 IT'
+
+
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L4-5 IT CTX']='L4/5/6 IT'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L5 IT CTX']='L4/5/6 IT'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L5-6 IT TPE-ENT']='L4/5/6 IT'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L6 IT CTX']='L4/5/6 IT'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L6 IT ENTl']='L4/5/6 IT'
+
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='Car3']='PT Car3'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L5 PT CTX']='PT Car3'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L4 RSP-ACA']='PT Car3'
+
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L5-6 NP CTX']='NP/CT/L6b'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L6 CT CTX']='NP/CT/L6b'
+Arx_female_ctx$cell.type[Arx_female_ctx$cell.type=='L6b CTX']='NP/CT/L6b'
+
+table(Arx_female_ctx$cell.type)
+# Convert back to factor if needed
+Arx_female_ctx$cell.type <- as.factor(Arx_female_ctx$cell.type)
+
+level2=c('Astro','Oligo','L2/3 IT','L4/5/6 IT','PT Car3','NP/CT/L6b','Lamp5','Sncg','Vip','Pvalb','Sst','Sst Chodl')
+Arx_female_ctx$cell.type <- factor(Arx_female_ctx$cell.type, levels = level2)
+saveRDS(Arx_female_ctx,'Arx_female_ctx.rds')
+
+### subset mian neuron types ###
+Idents(Arx_female_ctx)='full_first_type'
+# remove glial and low cell number neuron types
+exclude=c('Astro','Oligo','L2 IT ENTl','L2-3 IT ENTl','L2-3 IT PPP','L5-6 IT TPE-ENT','L6 IT ENTl','L4 RSP-ACA',
+          'L5-6 NP CTX','Sst Chodl')
+
+neurons=subset(Arx_female_ctx, idents=exclude, invert=TRUE)
+table(neurons$full_first_type)
+level3=c('L2-3 IT CTX','L4-5 IT CTX','L5 IT CTX','L6 IT CTX','Car3','L5 PT CTX','L6 CT CTX','L6b CTX','Lamp5','Sncg','Vip','Pvalb','Sst')
+saveRDS(neurons, '~/female_all/Arx_female_cortex_neurons_unpdate.rds')
+
+### main neuron type proportion analysis ###
+df_prop = neurons[[]] %>% 
+  # group by animal ID and experimental variables we want to keep & cell type
+  group_by(age_genotype, full_first_type) %>% 
+  # count the number of cells in each cell type
+  summarize(n = n()) %>% 
+  # calculate the proportion of each cell type in each animal
+  mutate(prop = n / sum(n)*100) %>% ungroup() %>% 
+  arrange(age_genotype, full_first_type) %>% 
+  mutate(full_first_type = factor(full_first_type), 
+         age_genotype = factor(age_genotype, levels = c('P21_wt_wt', 'P21_fl_wt','P120_wt_wt','P120_fl_wt')))
+
+col29=c("#FE00FA","#FEAF16","#B00068","#90AD1C","#DEA0FD","#AA0DFE","#C4451C","#1C8356","#85660D","#B10DA1","#FBE426","#1CBE4F","#FA0087")
+
+ggplot(df_prop,aes(age_genotype,prop))+ geom_bar(aes(fill=full_first_type),stat = "identity",position="fill",width=0.8)+ scale_fill_manual(values = col29)
+ggsave('ctx_prop_neurons.pdf',device = 'pdf',plot = last_plot())
+write.csv(df_prop,'df_prop_female_ctx.csv')
+
+### DEGs for P21 CTX ###
+DefaultAssay(Arx_female_ctx)='Spatial.008um'
+Arx_female_ctx=JoinLayers(Arx_female_ctx, assay ='Spatial.008um')
+# subset P21 samples
+Idents(Arx_female_ctx)='age'
+Arx_P21=subset(Arx_female_ctx, idents='P21')
+Idents(Arx_P21)='cell.type'
+#DE in celltypes between conditions
+# Get unique cell types
+cell_types <- unique(Arx_P21$cell.type)
+Idents(Arx_P21)='genotype'
+# Create a list to store DE results
+dge_results <- list()
+
+# Loop through each cell type
+for (ct in cell_types) {
+  # Subset cells of this cell type
+  cells_ct <- WhichCells(Arx_P21, expression = cell.type == ct)
+  seurat_subset <- subset(Arx_P21, cells = cells_ct)
+  
+  # Perform DE between KO and WT within this cell type
+  de_result <- FindMarkers(
+    seurat_subset,
+    ident.1 = "wt_wt",
+    ident.2 = "fl_wt",
+    group.by = "genotype",
+    logfc.threshold = 0.2,
+    test.use = "wilcox"  
+  )
+  
+  # Save result with name of cell type
+  dge_results[[ct]] <- de_result
+}
+
+head(dge_results[["Pvalb"]])
+
+# Create a list to store filtered and labeled results
+combined_results <- list()
+for (ct in names(dge_results)) {
+  df <- dge_results[[ct]]
+  # Add cell type column
+  df$cell_type <- ct
+  # Filter for adjusted p-value < 0.05
+  df <- df[df$p_val_adj < 0.05, ]
+  # Add gene name as a column (rownames are gene names)
+  df$gene <- rownames(df)
+  # Append to list
+  combined_results[[ct]] <- df
+}
+
+# Combine all into one data frame
+all_filtered_dge <- do.call(rbind, combined_results)
+
+# Reorder columns for readability
+all_filtered_dge <- all_filtered_dge[, c("gene", "cell_type", colnames(all_filtered_dge)[!colnames(all_filtered_dge) %in% c("gene", "cell_type")])]
+write.csv(all_filtered_dge, 'all_filtered_dge_ctx_P21.csv', row.names = FALSE)
+
+# visualization
+markers=all_filtered_dge
+#prepare data
+markers = markers %>% dplyr::filter(p_val_adj < 0.05) %>% dplyr::filter(abs(avg_log2FC) >= 0.2)
+scRNA.markers = markers
+scRNA.markers$label <- ifelse(scRNA.markers$avg_log2FC<0,"sigUp","sigDown")
+#topgene
+topgene <- scRNA.markers %>%
+group_by(cell_type) %>%
+top_n(n = 20, wt = avg_log2FC) %>%
+bind_rows(group_by(scRNA.markers, cell_type) %>%
+top_n(n = 20, wt = -avg_log2FC))
+#draw bar
+dfbar = scRNA.markers %>%
+group_by(cell_type) %>%
+summarise(low = round(min(avg_log2FC)-0.5),
+up = round(max(avg_log2FC)+0.5))%>% mutate(cell_type = factor(cell_type, levels = level2)) %>%
+  arrange(cell_type)
+
+# draw background
+p1=ggplot(scRNA.markers )+
+geom_col(aes(x = cell_type ,y = low),dfbar,
+fill = "#dcdcdc",alpha = 0.6)+
+geom_col(aes(x = cell_type ,y = up),dfbar,
+fill = "#dcdcdc",alpha = 0.6)+
+geom_jitter(aes(x = cell_type, y = avg_log2FC, color = label),scRNA.markers,
+size = 1,alpha=0.5,position = position_jitter(seed = 1234,width =0.4))+
+scale_color_manual(values = c("#0077c0","#c72d2e"))+
+theme_classic()
+
+p2=p1+geom_tile(aes(x = cell_type,y = 0,fill=cell_type),NULL,
+height = 0.5,show.legend = F,alpha = 0.5)+
+geom_text(aes(x= cell_type, y = 0, label = cell_type),NULL,
+size = 3,fontface = "bold")
+
+#add genes label
+p3 <- p2 +
+geom_text_repel(data=topgene,aes(x = cell_type,y = avg_log2FC,label =gene), position = position_jitter(width =0.4),size = 2,box.padding = unit(0.2, "lines"),point.padding = unit(0.3, "lines"),min.segment.length = 0,max.overlaps = 120,segment.size=0.5,segment.alpha = 0.7  )
+
+#adjust plot
+p3 <- p3+
+labs(x = "CellType",y = "log2FoldChange",
+title = "Differential expression genes")+
+theme(
+plot.title = element_text(size = 14,color = "black",face = "bold"),
+axis.title = element_text(size = 12,color = "black",face = "bold"),
+axis.line.y = element_line(color = "black",linewidth = 0.8),
+axis.line.x = element_blank(),
+axis.text.x = element_blank(),
+axis.ticks.x = element_blank(),
+panel.grid = element_blank(),
+legend.position.inside  = c(0.98,0.96),
+legend.background = element_blank(),
+legend.title = element_blank(),
+legend.direction = "vertical",
+legend.justification = c(1,0),
+legend.text = element_text(size = 12)
+)+
+guides(color = guide_legend(override.aes = list(size = 4)))
+p3
+ggsave('P21_ctx_volcano_nolabel.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
