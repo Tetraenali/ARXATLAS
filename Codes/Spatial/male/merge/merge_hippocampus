@@ -118,7 +118,7 @@ DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'seurat_clusters',split
 DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE,cols = col2)
 DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'seurat_clusters',split.by = 'genotype',label = TRUE,label.size = 3,raster = FALSE)
 DimPlot(Arx_male_hip,reduction = 'umap.hippo',group.by = 'full_first_type',split.by = 'age_genotype',label = FALSE,label.size = 3,raster = FALSE,cols = cols)
-ggsave('0314/Arx_male_hip_dim_library.pdf',device = 'pdf',plot = last_plot())
+ggsave('~/Arx_male_hip_dim_library.pdf',device = 'pdf',plot = last_plot())
 
 ImageDimPlot(Arx_male_hip, cols =cols, group.by = 'full_first_type',fov = c('tissue_hires_image.png.008um','tissue_hires_image.png.008um.2'))#p16
 ggsave('~/Arx_male_hip_spatial_p16.pdf',device = 'pdf',plot = last_plot(),width = 14)
@@ -200,7 +200,7 @@ all_filtered_dge <- do.call(rbind, combined_results)
 
 # Reorder columns for readability
 all_filtered_dge <- all_filtered_dge[, c("gene", "cell_type", colnames(all_filtered_dge)[!colnames(all_filtered_dge) %in% c("gene", "cell_type")])]
-write.csv(all_filtered_dge, 'all_filtered_dge_hip_male_0318.csv', row.names = FALSE)
+write.csv(all_filtered_dge, 'all_filtered_dge_hip_male.csv', row.names = FALSE)
 
 # visualization
 markers=all_filtered_dge
@@ -228,9 +228,7 @@ summarise(low = round(min(avg_log2FC)-0.5),
 up = round(max(avg_log2FC)+0.5)) %>% mutate(cell_type = factor(cell_type, levels = level1)) %>%
   arrange(cell_type)
 
-#add color bar and label
-
-#draw background
+#add color bar and label, draw background
 p1=ggplot(scRNA.markers )+
 geom_col(aes(x = cell_type ,y = low),dfbar,
 fill = "#dcdcdc",alpha = 0.6)+
@@ -247,9 +245,10 @@ size = 3,fontface = "bold")
 
 #add genes label
 p3 <- p2 +
-geom_text_repel(data=topgene,aes(x = cell_type,y = avg_log2FC,label =gene), position = position_jitter(width =0.4),size = 2,box.padding = unit(0.2, "lines"),point.padding = unit(0.3, "lines"),min.segment.length = 0,max.overlaps = 120,segment.size=0.5,segment.alpha = 0.7  )
-p3
-ggsave('de_male_hip_label_genes.pdf',device = 'pdf',plot = last_plot(),width = 14)
+geom_text_repel(data=topgene,aes(x = cell_type,y = avg_log2FC,label =gene), 
+                position = position_jitter(width =0.4),size = 2,box.padding = unit(0.2, "lines"),
+                point.padding = unit(0.3, "lines"),min.segment.length = 0,max.overlaps = 120,
+                segment.size=0.5,segment.alpha = 0.7) # add top gene or interest
 #adjust plot
 p3 <- p3+
 labs(x = "CellType",y = "log2FoldChange",
@@ -271,17 +270,116 @@ legend.text = element_text(size = 12)
 )+
 guides(color = guide_legend(override.aes = list(size = 4)))
 p3
-ggsave('de_male_hip_all_062426_1.pdf',device = 'pdf',plot = last_plot())
+ggsave('de_male_hip_all.pdf',device = 'pdf',plot = last_plot())
 
+### GO enrichment analysis ###
+# all Hip male CA1 DEG GO
+#extract background genes
+counts=Arx_male_hip[['Spatial.008um']]$counts
+# Total counts per gene
+gene_counts <- rowSums(counts)
+head(gene_counts)
+# Filter genes by zero or nonzero counts
+zero_genes <- gene_counts[gene_counts == 0]
+nonzero_genes <- gene_counts[gene_counts > 0]
+head(zero_genes)
+head(nonzero_genes)
+# Break if the counts of all zero_genes are greater than zero
+if (sum(zero_genes) > 0) {
+    stop("Nonzero genes are included in zero_genes!")
+}
+nonzero_gene_names <- names(nonzero_genes)
+head(nonzero_gene_names)
+# input DEG file
+dexp<-read.csv('all_filtered_dge_hip_male.csv')
+dexp=dexp %>% dplyr::filter(cell_type=='CA1-ProS') 
+colnames(dexp)[1]<-"SYMBOL"
+# Extract all significant results for ORA
+#sigDEGs <- dplyr::filter(dexp, signif=='TRUE')
+#Over-representation analysis with clusterProfiler
+CA1_go <- enrichGO(gene= dexp$SYMBOL,
+                OrgDb= org.Mm.eg.db,
+                keyType = "SYMBOL",
+                universe=nonzero_gene_names,
+                ont= "BP")
+#Reduce redundancy
+CA1_go<-clusterProfiler::simplify(CA1_go)
+CA1_go
+#visualization top and interest items
+item=c("regulation of synaptic plasticity","regulation of monoatomic ion transport","vesicle-mediated transport in synapse",
+"regulation of synapse structure or activity","regulation of neurogenesis","postsynapse organization","response to calcium ion",
+"dendrite development","nuclear receptor-mediated glucocorticoid signaling pathway","exocytosis") 
 
+CA1_go %>% dplyr::filter(p.adjust < 0.05) %>%
+ggplot(showCategory = item,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of DEGs")
+ggsave('all_hip_male_CA1_GO.pdf',plot = last_plot(),device = 'pdf')
+# CA3 GO analysis
+dexp<-read.csv('all_filtered_dge_hip_male.csv')
+dexp=dexp %>% dplyr::filter(cell_type=='CA3') 
+colnames(dexp)[1]<-"SYMBOL"
+# Extract all significant results for ORA
+#sigDEGs <- dplyr::filter(dexp, signif=='TRUE')
+#Over-representation analysis with clusterProfiler
+CA3_go <- enrichGO(gene= dexp$SYMBOL,
+                OrgDb= org.Mm.eg.db,
+                keyType = "SYMBOL",
+                universe=nonzero_gene_names,
+                ont= "BP")
+#Reduce redundancy
+CA3_go<-clusterProfiler::simplify(CA3_go)
+CA3_go
+#visualization
+item=c("regulation of synaptic plasticity","regulation of synapse structure or activity","regulation of synapse organization",
+"axonogenesis","vesicle-mediated transport in synapse","hormone transport","hormone secretion","peptide secretion",
+"response to peptide hormone", "regulation of metal ion transport") 
 
+CA3_go %>% dplyr::filter(p.adjust < 0.05) %>%
+ggplot(showCategory = item,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of DEGs")
+ggsave('all_hip_male_CA3_GO.pdf',plot = last_plot(),device = 'pdf')
 
+### hippocampal cell type dotplot visualization ###
+Arx_male_hip=readRDS('Arx_male_hip.rds')
+# find markers
+DefaultAssay(Arx_male_hip)='Spatial.008um'
+Idents(Arx_male_hip)='cell.type'
+markers <- FindAllMarkers(Arx_male_hip, only.pos = TRUE,assay = 'Spatial.008um')
+markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 5) %>%
+    ungroup() -> top5
+write.csv(top5,here('hippocampus_markers.csv'))
+#dot plot
+list=c('Apoe','Atp1a2','Aldoc','Cck','Atp2b1','Wfs1','Amigo2','Pcp4',
+       'Igfbp4','Nptxr','Chgb','Syn2','Fam163b','Sema5a','Prox1','Pvalb','Tac1','Syt2','Sst','Npy','Crhbp','Cnr1','Cxcl14','Gad2','Lamp5','Slc6a1','Hapln1')
 
+DotPlot(object = Arx_male_hip,features = list,cols = c("lightgrey", "#B00068"),dot.min = 0.05, dot.scale = 8) +
+    RotatedAxis() +
+    theme_bw(base_size = 12) +
+    ggtitle("Marker Gene Expression by Supertype") +
+    theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(hjust = 0.5, face = "bold"))
 
-
-
-
-
+ggsave('hip_cell_type_dotplot.pdf',plot = last_plot(),device = 'pdf',width = 14) 
 
 
 
