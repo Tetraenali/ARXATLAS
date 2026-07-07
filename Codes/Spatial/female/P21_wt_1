@@ -1,1 +1,212 @@
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(presto)
+library(SeuratWrappers)
+library(Banksy)
+library(sctransform)
+library(tidyverse)
+library(spacexr)
+
+### input P21 female wt_1 data generated from space ranger output ###
+# input
+wt_py='~/P21_F_Arx_WT1/outs'
+wt <- Load10X_Spatial(data.dir = wt_py, bin.size = 8,slice="wt")
+wt$orig.ident <- "wt"
+# clustering
+DefaultAssay(wt) <- "Spatial.008um"
+wt <- NormalizeData(wt)
+wt <- FindVariableFeatures(wt)
+wt <- ScaleData(wt)
+# create'sketch' assay
+wt <- SketchData(
+  object = wt,
+  ncells = 50000,
+  method = "LeverageScore",
+  sketched.assay = "sketch")
+
+# switch analysis to sketched cells
+DefaultAssay(wt) <- "sketch"
+# perform clustering workflow
+wt <- FindVariableFeatures(wt)
+wt <- ScaleData(wt)
+wt <- RunPCA(wt, assay = "sketch", reduction.name = "pca.sketch")
+wt <- FindNeighbors(wt, assay = "sketch", reduction = "pca.sketch", dims = 1:50)
+wt <- FindClusters(wt, cluster.name = "seurat_cluster.sketched", resolution = 3)
+wt <- RunUMAP(wt, reduction = "pca.sketch", reduction.name = "umap.sketch", return.model = T, dims = 1:50)
+#Project Data
+options(future.globals.maxSize = 10000 * 1024^2)
+wt <- ProjectData(
+  object = wt,
+  assay = "Spatial.008um",
+  full.reduction = "full.pca.sketch",
+  sketched.assay = "sketch",
+  sketched.reduction = "pca.sketch",
+  umap.model = "umap.sketch",
+  dims = 1:50,
+  refdata = list(seurat_cluster.projected = "seurat_cluster.sketched"))
+#visualize
+DefaultAssay(wt) <- "sketch"
+Idents(wt) <- "seurat_cluster.sketched"
+p1 <- DimPlot(wt, reduction = "umap.sketch", label = F) + ggtitle("Sketched clustering (50,000 cells)") + theme(legend.position = "bottom")
+p1
+DefaultAssay(wt) <- "Spatial.008um" # switch to full dataset
+Idents(wt) <- "seurat_cluster.projected"
+DimPlot(wt, reduction = "full.umap.sketch", label = F) + ggtitle("Projected clustering (full dataset)") + theme(legend.position = "bottom")
+SpatialDimPlot(wt, label = T, repel = T, label.size = 4)
+ggsave('~/wt_spatial.pdf',device = 'pdf',plot = last_plot())
+
+### banksy analysis ###
+DefaultAssay(wt) <- "Spatial.008um"
+wt <- RunBanksy(wt,
+  lambda = 0.8, verbose = TRUE,
+  assay = "Spatial.008um", slot = 'data',features = "variable",k_geom = 50)
+
+DefaultAssay(wt) <- "BANKSY"
+wt <- RunPCA(wt, assay = "BANKSY", reduction.name = "pca.banksy", features = rownames(wt), npcs = 30)
+wt<- FindNeighbors(wt, reduction = "pca.banksy", dims = 1:30)
+wt <- FindClusters(wt, cluster.name = "banksy_cluster", resolution = 0.5)
+# visualization
+Idents(wt) <- "banksy_cluster"
+SpatialDimPlot(wt, group.by = "banksy_cluster", label = T, repel = T, label.size = 2,image.alpha = 1)
+ggsave('~/wt_banksy.pdf',device = 'pdf',plot = last_plot())
+
+banksy_cells <- CellsByIdentities(fl)
+SpatialDimPlot(fl, cells.highlight = banksy_cells[setdiff(names(banksy_cells), "NA")], cols.highlight = c("#FFFF00", "grey50"), facet.highlight = T, combine = T) + NoLegend()
+saveRDS(wt, '~/wt_wt.rds')
+
+### subset cortex and run RCTD ###
+# subset
+Idents(wt)='banksy_cluster'
+wt_cortex=subset(wt,idents=c('24','4','2','12','19','5','7','5','1','13','33'))
+SpatialDimPlot(wt_cortex, group.by = "banksy_cluster", label = T,label.size = 2)
+ggsave('~/wt_cortex_banksy.pdf',device = 'pdf',plot = last_plot())
+
+# Integration with scRNA-seq data (deconvolution)
+# sketch the cortical subset of the Visium HD dataset
+DefaultAssay(wt_cortex) <- "Spatial.008um"
+wt_cortex <- FindVariableFeatures(wt_cortex)
+wt_cortex <- SketchData(
+  object = wt_cortex,
+  ncells = 50000,
+  method = "LeverageScore",
+  sketched.assay = "sketch")
+
+DefaultAssay(wt_cortex) <- "sketch"
+wt_cortex <- ScaleData(wt_cortex)
+wt_cortex <- RunPCA(wt_cortex, assay = "sketch", reduction.name = "pca.cortex.sketch", verbose = T)
+wt_cortex <- FindNeighbors(wt_cortex, reduction = "pca.cortex.sketch", dims = 1:50)
+wt_cortex <- RunUMAP(wt_cortex, reduction = "pca.cortex.sketch", reduction.name = "umap.cortex.sketch", return.model = T, dims = 1:50, verbose = T)
+
+# load in the reference scRNA-seq dataset
+ref <- readRDS("/data/BSPC-Petros/Arx_Project/110624/allen_scRNAseq_ref.Rds")
+
+Idents(ref) <- "subclass_label"
+counts <- ref[["RNA"]]$counts
+cluster <- as.factor(ref$subclass_label)
+nUMI <- ref$nCount_RNA
+levels(cluster) <- gsub("/", "-", levels(cluster))
+cluster <- droplevels(cluster)
+
+# create the RCTD reference object
+reference <- Reference(counts, cluster, nUMI)
+
+counts_hd <- wt_cortex[["sketch"]]$counts
+cortex_cells_hd <- colnames(wt_cortex[["sketch"]])
+coords <- GetTissueCoordinates(wt_cortex)[cortex_cells_hd, 1:2]
+
+# create the RCTD query object
+query <- SpatialRNA(coords, counts_hd, colSums(counts_hd))
+
+# run RCTD
+RCTD <- create.RCTD(query, reference, max_cores = 32)
+RCTD <- run.RCTD(RCTD, doublet_mode = "doublet")
+wt_cortex <- AddMetaData(wt_cortex, metadata = RCTD@results$results_df)
+
+# project RCTD labels from sketched cortical cells to all cortical cells
+wt_cortex$first_type <- as.character(wt_cortex$first_type)
+wt_cortex$first_type[is.na(wt_cortex$first_type)] <- "Unknown"
+wt_cortex <- ProjectData(
+  object = wt_cortex,
+  assay = "Spatial.008um",
+  full.reduction = "pca.cortex",
+  sketched.assay = "sketch",
+  sketched.reduction = "pca.cortex.sketch",
+  umap.model = "umap.cortex.sketch",
+  dims = 1:50,
+  refdata = list(full_first_type = "first_type"))
+
+# visualization
+DefaultAssay(wt_cortex) <- "Spatial.008um"
+SpatialDimPlot(wt_cortex, group.by = "full_first_type", label = T,label.size = 2)
+ggsave('~/wt_cortex_cell_type.pdf',device = 'pdf',plot = last_plot())
+table(wt_cortex$full_first_type)
+saveRDS(wt_cortex, '~/wt_wt_cortex.rds')
+
+### subset hippo and run RCTD ###
+Idents(wt)='banksy_cluster'
+wt_hippo=subset(wt,idents=c('31','9','21','26','20'))
+SpatialDimPlot(wt_hippo, group.by = "banksy_cluster", label = T,label.size = 2)
+ggsave('~/wt_hippo_banksy.pdf',device = 'pdf',plot = last_plot())
+
+# load in the reference scRNA-seq dataset
+ref <- readRDS("~/allen_scRNAseq_ref.Rds")
+Idents(ref) <- "subclass_label"
+counts <- ref[["RNA"]]$counts
+cluster <- as.factor(ref$subclass_label)
+nUMI <- ref$nCount_RNA
+levels(cluster) <- gsub("/", "-", levels(cluster))
+cluster <- droplevels(cluster)
+# create the RCTD reference object
+reference <- Reference(counts, cluster, nUMI)
+# sketch the hippo subset of the Visium HD dataset
+DefaultAssay(wt_hippo) <- "Spatial.008um"
+wt_hippo <- FindVariableFeatures(wt_hippo)
+wt_hippo<- SketchData(
+  object = wt_hippo,
+  ncells = 5000,
+  method = "LeverageScore",
+  sketched.assay = "sketch")
+#sketch normalized 
+DefaultAssay(wt_hippo) <- "sketch"
+wt_hippo <- ScaleData(wt_hippo)
+wt_hippo <- RunPCA(wt_hippo, assay = "sketch", reduction.name = "pca.hippo.sketch", verbose = T)
+wt_hippo <- FindNeighbors(wt_hippo, reduction = "pca.hippo.sketch", dims = 1:30)
+wt_hippo <- RunUMAP(wt_hippo, reduction = "pca.hippo.sketch", reduction.name = "umap.hippo.sketch", return.model = T, dims = 1:30, verbose = T)
+#create the query object
+counts_hd <- wt_hippo[["sketch"]]$counts
+wt_hippo_cells_hd <- colnames(wt_hippo[["sketch"]])
+coords <- GetTissueCoordinates(wt_hippo)[wt_hippo_cells_hd, 1:2]
+# create the RCTD query object
+query <- SpatialRNA(coords, counts_hd, colSums(counts_hd))
+# run RCTD on query and reference objects
+RCTD <- create.RCTD(query, reference, max_cores = 32)
+RCTD <- run.RCTD(RCTD, doublet_mode = "doublet")
+wt_hippo <- AddMetaData(wt_hippo, metadata = RCTD@results$results_df)
+# project RCTD labels from sketched cells to all cells
+wt_hippo$first_type <- as.character(wt_hippo$first_type)
+wt_hippo$first_type[is.na(wt_hippo$first_type)] <- "Unknown"
+wt_hippo <- ProjectData(
+  object = wt_hippo,
+  assay = "Spatial.008um",
+  full.reduction = "pca.hippo",
+  sketched.assay = "sketch",
+  sketched.reduction = "pca.hippo.sketch",
+  umap.model = "umap.hippo.sketch",
+  dims = 1:30,
+  refdata = list(full_first_type = "first_type"))
+
+# visualization and subset mian cell types
+DefaultAssay(wt_hippo) <- "Spatial.008um"
+table(wt_hippo$full_first_type)
+Idents(wt_hippo) <- "full_first_type"
+wt_hippo=subset(wt_hippo, idents=c('Astro','CA1-ProS','CA2-IG-FC','CA3','DG','Lamp5','Oligo','Pvalb','Sncg','Sst'))
+SpatialDimPlot(wt_hippo, group.by = "full_first_type", label = T,label.size = 1.5)
+ggsave('~/wt_hippo_cell_type.pdf',device = 'pdf',plot = last_plot())
+saveRDS(wt_hippo, '~/wt_wt_hippo.rds')
+
+
+
+
 
