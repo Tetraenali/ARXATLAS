@@ -99,7 +99,7 @@ allmarkers%>%
     ungroup() -> top10
 write.csv(top10,'clusters_marker_10.csv')
 
-### subset E15.5 subpaillium and DEGs analysis ###
+### subset E15.5 subpaillium, CTX and DEGs analysis ###
 # subset E15.5 subpaillium
 E15_merge=readRDS('E15_merge_4samples.rds')
 Idents(E15_merge)='seurat_clusters'
@@ -115,6 +115,8 @@ ggsave('E15_GE_spatial_fl_wt.pdf',device = 'pdf',plot = last_plot())
 ImageDimPlot(E15_GE, group.by = 'seurat_clusters',fov = 'wt_wt.008um',cols = col1)
 ggsave('E15_GE_spatial_wt_wt.pdf',device = 'pdf',plot = last_plot())
 saveRDS(E15_GE, 'E15_GE.rds')
+
+
 
 # male DEGs analysis
 Idents(E15_GE) <- "genotype"
@@ -183,6 +185,24 @@ EnhancedVolcano(GE_de_fe,
                 colConnectors = 'black',
                 xlim = c(-2.5, 2.5))
 ggsave('E15_GE_de_female.pdf',device = 'pdf',plot = last_plot())
+
+# subset CTX
+Idents(E15_merge)='seurat_clusters'
+cortex=c('3','9','1','6','2','17','15')
+CTX=subset(E15_merge,ident=cortex)
+col2=DiscretePalette(length(unique(CTX$seurat_clusters)),'polychrome')
+ImageDimPlot(CTX, group.by = 'seurat_clusters',fov = 'wt_y.008um',cols = col2)
+ggsave('E15_ctx_spatial_wt_y.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(CTX, group.by = 'seurat_clusters',fov = 'fl_y.008um',cols = col2)
+ggsave('E15_CTX_spatial_fl_y.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(CTX, group.by = 'seurat_clusters',fov = 'fl_wt.008um',cols = col2)
+ggsave('E15_CTX_fl_wt.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(CTX, group.by = 'seurat_clusters',fov = 'wt_wt.008um',cols = col2)
+ggsave('E15_CTX_spatial_wt_wt.pdf',device = 'pdf',plot = last_plot())
+saveRDS(CTX, 'E15_CTX.rds')
 
 ### Spatial visualization of gene expression ###
 #male visualization
