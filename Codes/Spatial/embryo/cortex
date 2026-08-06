@@ -129,20 +129,76 @@ ImageDimPlot(CTX, group.by = 'seurat_clusters',fov = 'fl_wt.polygons',cols = col
 ggsave('E15_CTX_spatial_fl_wt.pdf',device = 'pdf',plot = last_plot())
 
 saveRDS(CTX, 'E15_CTX_polygons.rds')
+# subset male CTX
+E15_CTX=readRDS('E15_CTX_polygons.rds')
+Idents(E15_CTX)='sex'
+E15_male_ctx=subset(E15_CTX, ident='male')
 
 
+### E13.5 part ###
+# subset male
+E13_merge=readRDS('~/E13_merge_4samples.rds')
+Idents(E13_merge)='sex'
+E13_male=subset(E13_merge, idents='male') 
+table(E13_male$seurat_clusters)
+cols=DiscretePalette(length(unique(E13_male$seurat_clusters)),'polychrome')
+DimPlot(E13_male, reduction = "umap", group.by = "seurat_clusters",label = TRUE,split.by = 'genotype',cols = cols) 
+SpatialDimPlot(E13_male, group.by = 'seurat_clusters',images = 'wt_y.polygons',label = TRUE,label.size = 0.5)
+ImageDimPlot(E13_male, group.by = 'seurat_clusters',fov = 'wt_y.polygons',cols = cols)
+# subset CTX
+Idents(E13_male)='seurat_clusters'
+ctx=subset(E13_male,idents=c(7,6,16,8,13,15))
+DimPlot(ctx, reduction = "umap", group.by = "seurat_clusters",label = TRUE,split.by = 'genotype',
+        cols =c("#FEAF16","#B00068","#1CFFCE","#F8A19F","#C4451C","#1C8356") ) 
+ImageDimPlot(ctx, group.by = 'seurat_clusters',fov = 'wt_y.polygons',
+  cols = c("#FEAF16","#B00068","#1CFFCE","#F8A19F","#C4451C","#1C8356"))
+ImageDimPlot(ctx, group.by = 'seurat_clusters',fov = 'fl_y.polygons',
+  cols = c("#FEAF16","#B00068","#1CFFCE","#F8A19F","#C4451C","#1C8356"))
+saveRDS(ctx, '~/E13_male_ctx.rds')
 
+### merge cortex of male E13.5 and E15.5 ### 
+E13_male_ctx=readRDS('~/E13_male_ctx.rds')
+ctx_merge=merge(E15_male_ctx,y=E13_male_ctx,add.cell.ids = c("1", "2"))
 
+# clustering, first round 
+ctx_merge <- FindVariableFeatures(ctx_merge)
+ctx_merge <- ScaleData(ctx_merge)
+options(future.globals.maxSize = 10000 * 1024^2)
+ctx_merge <- RunPCA(ctx_merge)
+ctx_merge <- FindNeighbors(ctx_merge, dims = 1:15)
+ctx_merge <- FindClusters(ctx_merge)
+ctx_merge <- RunUMAP(ctx_merge, dims = 1:15)
 
+cols=DiscretePalette(length(unique(ctx_merge$seurat_clusters)),'polychrome')
+Idents(ctx_merge) <- "seurat_clusters"
+ctx_merge$library <- paste(ctx_merge$age, 
+                                ctx_merge$genotype, sep = "_")
+DimPlot(ctx_merge, reduction = "umap", group.by = "seurat_clusters",label = FALSE,split.by = 'library',cols = cols) 
 
+ctx_merge$seurat_clusters <- factor(ctx_merge$seurat_clusters)
+ImageDimPlot(ctx_merge, group.by = 'seurat_clusters',fov = 'wt_y.polygons',cols = cols)
+ggsave('E15_wt_y_ctx.pdf',device = 'pdf',plot = last_plot())
+ImageDimPlot(ctx_merge, group.by = 'seurat_clusters',fov = 'fl_y.polygons',cols = cols)
+ggsave('E15_ko_ctx.pdf',device = 'pdf',plot = last_plot())
 
+ImageDimPlot(ctx_merge, group.by = 'seurat_clusters',fov = 'wt_y.polygons.2',cols = cols)
+ggsave('E13_wt_y_ctx.pdf',device = 'pdf',plot = last_plot())
+ImageDimPlot(ctx_merge, group.by = 'seurat_clusters',fov = 'fl_y.polygons.2',cols = cols)
+ggsave('E13_ko_ctx.pdf',device = 'pdf',plot = last_plot())
 
+ctx_merge=JoinLayers(ctx_merge, assay ='Spatial.Polygons')
+Idents(ctx_merge)='seurat_clusters'
+allmarkers<-FindAllMarkers(ctx_merge,only.pos = TRUE)
 
+allmarkers%>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 20) %>%
+    ungroup() -> top20
+write.csv(top20,'clusters_markers.csv')
+saveRDS(ctx_merge, 'E15_E13_CTX_polygons_male.rds')
 
-
-
-
-
+#DEGs analysis
 
 
 
