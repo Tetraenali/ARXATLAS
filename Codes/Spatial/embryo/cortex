@@ -196,25 +196,229 @@ allmarkers%>%
     slice_head(n = 20) %>%
     ungroup() -> top20
 write.csv(top20,'clusters_markers.csv')
+
+# annotation
+Idents(ctx_merge)='seurat_clusters'
+cell_type = case_when(ctx_merge$seurat_clusters %in% c(1,2,4,16,17,18)~ "RGCs",
+                      ctx_merge$seurat_clusters  %in% c(10,7) ~ "IPCs",
+                      ctx_merge$seurat_clusters  %in% c(6) ~ "Immature neurons",
+                      ctx_merge$seurat_clusters  %in% c(5,13,8) ~ "DL cortical neurons",
+                      ctx_merge$seurat_clusters  %in% c(0,11) ~ "CPN1",
+                      ctx_merge$seurat_clusters  %in% c(12,15) ~ "CPN2",
+                      ctx_merge$seurat_clusters  %in% c(14) ~ "CR",
+                      ctx_merge$seurat_clusters  %in% c(3) ~ "Interneurons",
+                      ctx_merge$seurat_clusters  %in% c(9) ~ "Vascular")
+ctx_merge=AddMetaData(ctx_merge,metadata=cell_type,col.name = "cell_type")
+level2=c("RGCs","IPCs","Immature neurons","DL cortical neurons","CPN1","CR","Interneurons","Vascular","CPN2")
+ctx_merge$cell_type <- factor(ctx_merge$cell_type, levels = level2)
+
+cols=DiscretePalette(length(unique(ctx_merge$cell_type)),'polychrome')
+DimPlot(ctx_merge, reduction = "umap", group.by = "cell_type",label = FALSE,split.by = 'library',cols = cols,raster = FALSE) 
+ggsave('dimplot_ctx_cell_type.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'wt_y.polygons',cols = cols)
+ggsave('E15_wt_y_ctx_cell_type.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'fl_y.polygons',cols = cols)
+ggsave('E15_ko_ctx_cell_type.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'wt_y.polygons.2',cols = cols)
+ggsave('E13_wt_y_ctx_cell_type.pdf',device = 'pdf',plot = last_plot())
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'fl_y.polygons.2',cols = cols)
+ggsave('E13_ko_ctx_cell_type.pdf',device = 'pdf',plot = last_plot())
+
 saveRDS(ctx_merge, 'E15_E13_CTX_polygons_male.rds')
 
 #DEGs analysis
+# E15.5 male cortex
+Idents(ctx_merge) <- "library"
+de_ctx<-FindMarkers(ctx_merge , verbose = F, test.use = "wilcox", 
+                          ident.1 = "E15_wt_y", 
+                          ident.2 = "E15_fl_y")
+alpha = 10e-50
+de_ctx = de_ctx%>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha & abs(avg_log2FC)>0.1)%>% mutate(1:nrow(.))
 
+write.csv(de_ctx,'E15_ctx_de_male.csv')
+EnhancedVolcano(de_ctx,
+                lab = rownames(de_ctx),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = c('Maf','Lhx6','Dlx2','Cdk4','Mki67','Eomes','Sst','Mafb','Nxph1','Gad2','Cux2','Pax6','Erbb4','Ackr3','Tbr1','Satb2','Sp9'),
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-50,
+                FCcutoff = 0.1,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-1.5, 3))
 
+ggsave('E15_ctx_de_male.pdf',device = 'pdf',plot = last_plot())
 
+# E13.5 male cortex
+Idents(ctx_merge) <- "library"
+E13_de_ctx<-FindMarkers(ctx_merge , verbose = F, test.use = "wilcox", 
+                          ident.1 = "E13_wt_y", 
+                          ident.2 = "E13_fl_y")
+alpha = 10e-6
+E13_de_ctx = E13_de_ctx%>% mutate(de_type = 'single_cell') %>%  arrange(p_val_adj) %>% 
+  mutate(signif = p_val_adj< alpha & abs(avg_log2FC)>0.2)%>% mutate(1:nrow(.))
 
+write.csv(E13_de_ctx,'E13_ctx_de_male.csv')
 
+EnhancedVolcano(E13_de_ctx,
+                lab = rownames(E13_de_ctx),
+                x = 'avg_log2FC',
+                y = 'p_val_adj',
+                selectLab = c('Maf','Lhx6','Dlx2','Cdk4','Mki67','Eomes','Sst',
+                'Mafb','Nxph1','Gad2','Cux2','Pax6','Erbb4','Ackr3','Tbr1','Satb2','Sp9','Ptn','Bcl11b','Neurod2','Neurod6','Vim'),
+                xlab = bquote(~Log[2]~ 'fold change'),
+                pCutoff = 10e-6,
+                FCcutoff = 0.2,
+                pointSize = 1.5,
+                labSize = 3.0,
+                labCol = 'black',
+                labFace = 'bold',
+                boxedLabels = FALSE,
+                colAlpha = 0.6,
+                legendPosition = 'right',
+                legendLabSize = 14,
+                legendIconSize = 4.0,
+                drawConnectors = TRUE,
+                widthConnectors = 1.0,
+                colConnectors = 'black',
+                xlim = c(-2, 3))
 
+ggsave('E13_ctx_de_male.pdf',device = 'pdf',plot = last_plot())
 
+# clustering, second round 
+ctx_merge=readRDS('E15_E13_CTX_polygons_male.rds')
+table(ctx_merge$cell_type)
+DefaultAssay(ctx_merge)='Spatial.Polygons'
+Idents(ctx_merge)='cell_type'
+ctx_merge_sub=subset(ctx_merge, idents="Vascular", invert=TRUE) # remove vascular type for further analysis
+table(ctx_merge_sub$cell_type)
+ctx_merge=ctx_merge_sub
+#
+ctx_merge <- FindVariableFeatures(ctx_merge)
+ctx_merge <- ScaleData(ctx_merge)
+options(future.globals.maxSize = 10000 * 1024^2)
+ctx_merge <- RunPCA(ctx_merge)
+ctx_merge <- FindNeighbors(ctx_merge, dims = 1:30)
+ctx_merge <- FindClusters(ctx_merge)
+ctx_merge <- RunUMAP(ctx_merge, dims = 1:30)
+# subset sepcific clusters
+ctx_merge_1 <- FindSubCluster(
+  ctx_merge, 
+  cluster = "1", 
+  graph.name = "Spatial.Polygons_nn", 
+  subcluster.name = "subclusters", 
+  resolution = 0.2)
 
+ctx_merge_1 <- FindSubCluster(
+  ctx_merge_1, 
+  cluster = "15", 
+  graph.name = "Spatial.Polygons_nn", 
+  subcluster.name = "subclusters_2", 
+  resolution = 0.2)
+table(ctx_merge_1$subclusters_2)
 
+cols=DiscretePalette(length(unique(ctx_merge_1$subclusters_2)),'polychrome')
+ctx_merge_1$subclusters_2 <- factor(ctx_merge_1$subclusters_2)
+Idents(ctx_merge_1) <- "subclusters_2"
 
+DimPlot(ctx_merge_1, reduction = "umap", group.by = "subclusters_2",label = FALSE,split.by = 'library',cols = cols) 
+ggsave('dimplot_ctx.pdf',device = 'pdf',plot = last_plot(),width = 14)
+ImageDimPlot(ctx_merge_1, group.by = 'subclusters_2',fov = 'wt_y.polygons',cols = cols)
+ggsave('E15_wt_y_ctx.pdf',device = 'pdf',plot = last_plot())
+ImageDimPlot(ctx_merge_1, group.by = 'subclusters_2',fov = 'fl_y.polygons',cols = cols)
+ggsave('E15_ko_ctx.pdf',device = 'pdf',plot = last_plot())
+ImageDimPlot(ctx_merge_1, group.by = 'subclusters_2',fov = 'wt_y.polygons.2',cols = cols)
+ggsave('E13_wt_y_ctx.pdf',device = 'pdf',plot = last_plot())
+ImageDimPlot(ctx_merge_1, group.by = 'subclusters_2',fov = 'fl_y.polygons.2',cols = cols)
+ggsave('E13_ko_ctx.pdf',device = 'pdf',plot = last_plot())
+# identify markers
+Idents(ctx_merge_1)='subclusters_2'
+allmarkers<-FindAllMarkers(ctx_merge_1,only.pos = TRUE)
 
+allmarkers%>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 0.5) %>%
+    slice_head(n = 20) %>%
+    ungroup() -> top20
 
+write.csv(allmarkers,'clusters_marker.csv')
+write.csv(top20,'clusters_marker_top20.csv')
+saveRDS(ctx_merge_1, 'CTX_merge_suclusters_2.rds')
 
+# clustering and annotation
+ctx_merge=ctx_merge_1
+ctx_merge <- FindVariableFeatures(ctx_merge)
+ctx_merge <- ScaleData(ctx_merge)
+options(future.globals.maxSize = 10000 * 1024^2)
+ctx_merge <- RunPCA(ctx_merge)
+ctx_merge <- FindNeighbors(ctx_merge, dims = 1:15)
+ctx_merge <- FindClusters(ctx_merge)
+ctx_merge <- RunUMAP(ctx_merge, dims = 1:15)
 
+Idents(ctx_merge)='subclusters_2'
+cell_type= case_when(ctx_merge$subclusters_2 %in% c('6','9','2','17','19')~ "RGCs",
+                      ctx_merge$subclusters_2  %in% c('3','13','4') ~ "IPCs",
+                      ctx_merge$subclusters_2  %in% c('1_0') ~ "INs_SVZ stream",
+                      ctx_merge$subclusters_2  %in% c('15_1', '15_3') ~ "INs_MZ stream",
+                      ctx_merge$subclusters_2  %in% c('11') ~ "Migratory ExNs",
+                      ctx_merge$subclusters_2  %in% c("0","1_1") ~ "UL CPN",
+                      ctx_merge$subclusters_2  %in% c('14','10','5','12','8') ~ "DL CPN",
+                      ctx_merge$subclusters_2  %in% c('7') ~ "Immature DL CPN",
+                      ctx_merge$subclusters_2  %in% c('15_0','15_2','18') ~ "CR")
 
+ctx_merge=AddMetaData(ctx_merge,metadata=cell_type,col.name = "cell_type")
+table(ctx_merge$cell_type,ctx_merge$library)
+level2=c("RGCs","IPCs","Immature DL CPN","DL CPN","UL CPN",'Migratory ExNs',"CR","INs_SVZ stream","INs_MZ stream")
+ctx_merge$cell_type <- factor(ctx_merge$cell_type, levels = level2)
 
+# visualization
+cols=DiscretePalette(length(unique(ctx_merge$cell_type)),'polychrome')
+DimPlot(ctx_merge, reduction = "umap", group.by = "cell_type",label = FALSE,split.by = 'library',cols = cols,raster = FALSE) 
+ggsave('dimplot_ctx_cell_type_1.pdf',device = 'pdf',plot = last_plot(),width = 14)
+
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'wt_y.polygons',cols = cols)
+ggsave('E15_wt_y_ctx_cell_type_1.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'fl_y.polygons',cols = cols)
+ggsave('E15_ko_ctx_cell_type_1.pdf',device = 'pdf',plot = last_plot())
+
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'wt_y.polygons.2',cols = cols)
+ggsave('E13_wt_y_ctx_cell_type_1.pdf',device = 'pdf',plot = last_plot())
+ImageDimPlot(ctx_merge, group.by = 'cell_type',fov = 'fl_y.polygons.2',cols = cols)
+ggsave('E13_ko_ctx_cell_type_1.pdf',device = 'pdf',plot = last_plot())
+saveRDS(ctx_merge, 'CTX_merge_suclusters_1.rds')
+# heatmap for cell.type
+Idents(ctx_merge)='cell_type'
+allmarkers<-FindAllMarkers(ctx_merge,only.pos = TRUE)
+allmarkers%>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 5) %>%
+    ungroup() -> top5
+
+ctx_merge$cell_type <- as.character(ctx_merge$cell_type)
+
+DoHeatmap(ctx_merge, 
+          features = top5$gene, 
+          group.colors = DiscretePalette(9, palette = "polychrome")) +
+  NoLegend() +
+  scale_fill_gradientn(colors = c("#90C9E7", "white", "#FA8600"))
+ggsave('ctx_male_heatmap_0709.pdf',device = 'pdf',plot = last_plot(),width = 15)
 
 
 
