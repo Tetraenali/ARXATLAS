@@ -1,1 +1,73 @@
+###Cell-cell communication was analyzed in E15.5 male cortex using CellChat version 3 
+following tutorial (SpatialCellChat analysis of spatial transcriptomics data)###
+## Load the required libraries
+library(SpatialCellChat)
+library(CellChat)
+library(Matrix)
+library(patchwork)
+options(stringsAsFactors = F)
+library(ggplot2)
+packageVersion("Seurat")
+packageVersion("SeuratObject")
+### wt cortex
+Part I: Data input & processing and initialization of Spatial CellChat object
+setwd("~/E15/Polygons")
+seu=readRDS('CTX_merge_suclusters.rds')
+Idents(seu)='library'
+table(seu$library)
+wt_seu=subset(seu, idents='E15_wt_y')
+seu=wt_seu
+DefaultAssay(seu) <- "Spatial.Polygons"
+
+tissue_image <- SpatialDimPlot(seu,
+                               images = "wt_y.polygons",
+                               alpha = 0,
+                               image.scale = "hires") +
+                    ggtitle("Tissue image") + NoLegend()
+
+# Define layer to customize axis 
+theme_layer <- theme(axis.text.x = element_text(size = 10, angle = 45),
+                                    axis.text.y = element_text(size = 10),
+                                    axis.title.x = element_text(size = 10),
+                                    axis.title.y = element_text(size = 10))
+
+tissue_image_with_axes <- tissue_image + 
+                              scale_x_continuous(n.breaks = 20) +
+                              scale_y_reverse(n.breaks = 20) +
+                              theme_layer
+
+tissue_image_with_axes
+ggsave('cellchat/wt_image.pdf',device = 'pdf',plot = last_plot())
+# subset ROI
+zoom1_xlim <- c(0, 900)
+zoom1_ylim <- c(2250, 3000)
+
+seu[["zoom_wt.polygons"]] <- Crop(object = seu[["wt_y.polygons"]],
+                                              x = zoom1_xlim,
+                                              y = zoom1_ylim,
+                                              scale = "hires")
+
+SpatialDimPlot(seu,images = "zoom_wt.polygons",alpha = 0,image.scale = "hires") + NoLegend()
+ggsave('cellchat/wt_image_zoom.pdf',device = 'pdf',plot = last_plot())
+
+# get cell names visible within the cropped FOV
+cells.in.zoom <- Cells(seu[["zoom_wt.polygons"]])
+
+length(cells.in.zoom) 
+head(cells.in.zoom)
+seu.zoom <- subset(seu, cells = cells.in.zoom)
+dim(seu.zoom)                 
+Images(seu.zoom)               
+GetTissueCoordinates(seu.zoom) 
+
+seu.zoom@images[["wt_y.polygons"]] <- NULL
+DefaultFOV(seu.zoom) <- "zoom_wt.polygons"  
+saveRDS(seu.zoom,'cellchat/seu.zoom_wt.rds')
+seu=seu.zoom
+
+
+
+
+
+
 
