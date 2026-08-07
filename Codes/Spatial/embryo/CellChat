@@ -9,7 +9,7 @@ options(stringsAsFactors = F)
 library(ggplot2)
 packageVersion("Seurat")
 packageVersion("SeuratObject")
-### wt cortex
+### wt cortex ###
 Part I: Data input & processing and initialization of Spatial CellChat object
 setwd("~/E15/Polygons")
 seu=readRDS('CTX_merge_suclusters.rds')
@@ -64,6 +64,335 @@ seu.zoom@images[["wt_y.polygons"]] <- NULL
 DefaultFOV(seu.zoom) <- "zoom_wt.polygons"  
 saveRDS(seu.zoom,'cellchat/seu.zoom_wt.rds')
 seu=seu.zoom
+
+## CellChat
+# prepare spatial transcriptomics information
+spatial.locs <- GetTissueCoordinates(seu, scale = NULL, cols = c("imagerow", "imagecol"))
+# adjust the view
+spatial.locs[,2] <- max(spatial.locs[,2])-spatial.locs[,2]
+temp_coordinates <- spatial.locs
+spatial.locs[,1] <- temp_coordinates[,2]
+spatial.locs[,2] <- temp_coordinates[,1]
+spatial.locs[,1] <- max(spatial.locs[,1])-spatial.locs[,1]
+colnames(spatial.locs) <- c("x", "y")
+
+# force to matrix with exactly 2 columns, named x/y, with correct rownames
+spatial.locs <- as.matrix(spatial.locs[, c("x", "y")])
+rownames(spatial.locs) <- colnames(seu)  # or Cells(seu), ensure order matches
+dim(spatial.locs)   # should print: n_cells 2
+class(spatial.locs) # should print: "matrix" "array"
+
+conversion.factor = 1
+spot.size = 10 # average neuron cell size
+spatial.factors = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+seu[["Spatial"]] <- seu[["Spatial.Polygons"]]
+DefaultAssay(seu) <- "Spatial"
+seu[["Spatial.Polygons"]] <- NULL
+
+#Create a Spatial CellChat object
+chat <- createSpatialCellChat(
+  object = seu, # Seurat
+  group.by = "cell_type",
+  assay = "Spatial", # normalized
+  datatype = "spatial",
+  coordinates = spatial.locs,
+  spatial.factors = spatial.factors
+)
+#Set the ligand-receptor interaction database
+CellChatDB <- CellChatDB.mouse
+# showDatabaseCategory(CellChatDB)
+# Show the structure of the database
+dplyr::glimpse(CellChatDB$interaction)
+CellChatDB.use <- subsetDB(CellChatDB) ## use all CellChatDB except for "Non-protein Signaling" for cell-cell communication analysis
+chat@DB <- CellChatDB.use
+saveRDS(chat,'chat.rds')
+#Preprocessing the expression data for cell-cell communication analysis
+chat=readRDS('chat.rds')
+# subset the expression data of signaling genes for saving computation cost
+chat <- subsetData(chat) 
+chat <- preProcessing(chat) 
+chat <- identifyOverExpressedGenes(
+  chat,
+  selection.method = "meringue", # method for selecting (spatially) variable features
+  do.grid = F 
+)
+
+chat <- identifyOverExpressedInteractions(
+  chat,
+  variable.both = F 
+)
+Part II: Inference of cell-cell communication network
+# Compute the communication probability and infer cellular communication network
+chat@idents <- droplevels(chat@idents)
+table(chat@idents)  # confirm all remaining levels have nonzero counts
+options(future.globals.maxSize = 1000000 * 1024^2)
+chat <- computeCommunProb(
+  chat,
+  distance.use = TRUE, scale.distance = 0.27,
+  contact.dependent = TRUE,
+  interaction.range = 250, contact.range = 10
+)
+#filter out communications with few interactions
+chat <- filterProbability(chat)
+chat <- filterCommunication(
+  chat, min.cells = NULL,
+  min.links = 10,
+  min.cells.sr = 10
+)
+# Infer the communication network at the cell group level
+chat <- computeAvgCommunProb(
+  chat,
+  avg.type = 'avg',
+  nboot = 100,
+  do.permutation = T
+)
+chat <- filterCommunication(chat, min.cells = 10, min.links = NULL, min.cells.sr = NULL)
+
+# Extract the inferred cellular communication network as a data frame
+df.net <- subsetCommunication(chat)
+df.net.pathway <- subsetCommunication(chat, slot.name = "netP")
+# Infer the cell-cell communication at a signaling pathway level
+chat <- computeCommunProbPathway(chat)
+# Calculate the aggregated cell-cell communication network 
+chat <- aggregateNet(chat)
+# Compute the network centrality scores
+options(future.globals.maxSize = 10000 * 1024^2)
+chat <- netAnalysis_computeCentrality(
+  chat,
+  slot.name = "net",
+  do.group = F,
+  degree.only = T
+)
+chat <- netAnalysis_computeCentrality(
+  chat,
+  slot.name = "net",
+  do.group = T,
+  degree.only = T
+)
+chat <- netAnalysis_computeCentrality(
+  chat,
+  slot.name = "netP",
+  do.group = F,
+  degree.only = T
+)
+chat <- netAnalysis_computeCentrality(
+  chat,
+  slot.name = "netP",
+  do.group = T,
+  degree.only = T
+)
+ readr::write_rds(chat,file = "wt_Chat_computeCentrality.rds")
+
+### cKO cortex ###
+#Load data
+setwd("~/E15/Polygons/cellchat")
+seu=readRDS('CTX_merge_suclusters.rds')
+table(seu$library)
+Idents(seu)='library'
+seu_trimmed <- seu
+seu_trimmed@images <- seu_trimmed@images["fl_y.polygons"]  # keep only relevant FOV
+# Drop the empty boundary layer
+seu_trimmed[["fl_y.polygons"]]@boundaries[["segmentations"]] <- NULL
+# subset
+fl_seu <- subset(seu_trimmed, idents = "E15_fl_y")
+
+tissue_image=ImageDimPlot(fl_seu, fov = "fl_y.polygons", axes = TRUE) +
+  ggtitle("Tissue image")
+
+# Define layer to customize axis text
+theme_layer <- theme(axis.text.x = element_text(size = 10, angle = 45),
+                                    axis.text.y = element_text(size = 10),
+                                    axis.title.x = element_text(size = 10),
+                                    axis.title.y = element_text(size = 10))
+
+tissue_image_with_axes <- tissue_image + 
+                              scale_x_continuous(n.breaks = 20) +
+                              scale_y_reverse(n.breaks = 20) +
+                              theme_layer
+
+tissue_image_with_axes
+ggsave('cellchat/fl_image.pdf',device = 'pdf',plot = last_plot())
+# subset ROI
+zoom1_xlim <- c(7500, 10000)
+zoom1_ylim <- c(2500, 6000)
+
+fl_seu[["zoom_fl.polygons"]] <- Crop(object = fl_seu[["fl_y.polygons"]],
+                                              x = zoom1_xlim,
+                                              y = zoom1_ylim,coords = "tissue")
+
+ImageDimPlot(fl_seu, fov = "zoom_fl.polygons", axes = TRUE) +
+  ggtitle("Tissue image")
+ggsave('fl_image_zoom_3.pdf',device = 'pdf',plot = last_plot())
+
+# get cell names visible within the cropped FOV
+
+cells.in.zoom <- Cells(fl_seu[["zoom_fl.polygons"]])
+
+length(cells.in.zoom)  
+head(cells.in.zoom)
+fl_seu
+seu.zoom <- subset(fl_seu, cells = cells.in.zoom)
+dim(seu.zoom)                  # cell count should match length(cells.in.zoom)
+Images(seu.zoom)               # confirm zoom_wt.polygons is present
+GetTissueCoordinates(seu.zoom) # coordinates should now span only the cropped x/y range
+
+seu.zoom@images[["fl_y.polygons"]] <- NULL
+DefaultFOV(seu.zoom) <- "zoom_fl.polygons"  
+saveRDS(seu.zoom,'seu.zoom_fl.rds')
+
+# prepare spatial transcriptomics information
+setwd("~/E15/Polygons/cellchat")
+seu=readRDS('seu.zoom_fl.rds')
+
+spatial.locs <- GetTissueCoordinates(seu, scale = NULL, cols = c("imagerow", "imagecol"))
+# adjust the view
+spatial.locs[,2] <- max(spatial.locs[,2])-spatial.locs[,2]
+temp_coordinates <- spatial.locs
+spatial.locs[,1] <- temp_coordinates[,2]
+spatial.locs[,2] <- temp_coordinates[,1]
+spatial.locs[,1] <- max(spatial.locs[,1])-spatial.locs[,1]
+colnames(spatial.locs) <- c("x", "y")
+
+# matrix with exactly 2 columns, named x/y, with correct rownames
+spatial.locs <- as.matrix(spatial.locs[, c("x", "y")])
+rownames(spatial.locs) <- colnames(seu)  
+dim(spatial.locs)   # should print: n_cells 2
+class(spatial.locs) # should print: "matrix" "array"
+
+conversion.factor = 1
+spot.size = 10 # average neuron cell size
+spatial.factors = data.frame(ratio = conversion.factor, tol = spot.size/2)
+
+seu[["Spatial"]] <- seu[["Spatial.Polygons"]]
+DefaultAssay(seu) <- "Spatial"
+seu[["Spatial.Polygons"]] <- NULL
+
+#Create a Spatial CellChat object
+chat <- createSpatialCellChat(
+  object = seu, # Seurat
+  group.by = "cell_type",
+  assay = "Spatial", # normalized
+  datatype = "spatial",
+  coordinates = spatial.locs,
+  spatial.factors = spatial.factors
+)
+#Set the ligand-receptor interaction database
+CellChatDB <- CellChatDB.mouse
+CellChatDB.use <- subsetDB(CellChatDB) ## use all CellChatDB except for "Non-protein Signaling" for cell-cell communication analysis
+chat@DB <- CellChatDB.use
+saveRDS(chat,'chat_ko.rds')
+
+chat <- subsetData(chat) 
+chat <- preProcessing(chat) 
+chat <- identifyOverExpressedGenes(
+  chat,
+  selection.method = "meringue", 
+  do.grid = F 
+)
+chat <- identifyOverExpressedInteractions(
+  chat,
+  variable.both = F 
+)
+# following Inference of cell-cell communication network step the same with wt part
+
+### Downstream analysis of cell-cell communication network ###
+# Spatial plot
+cols=c("#5A5156","#E4E1E3","#FE00FA","#16FF32","#3283FE","#FEAF16","#B00068","#1CFFCE")
+spatialDimPlot(fl_chat, 
+                color.use = cols,      
+                title.name = "Cell_types",
+                point.size = 1.5)
+ggsave('fl_celltype.pdf',device = 'pdf',plot = last_plot())
+
+spatialDimPlot(wt_chat, 
+                color.use = cols,      
+                title.name = "Cell_types",
+                point.size = 1.5)
+ggsave('wt_celltype.pdf',device = 'pdf',plot = last_plot(),height=10)
+
+# Visualize inferred communication at the individual cell level
+pathway.show <- "EPHA"
+p1=spatialVisual_scoring(wt_chat, signaling = pathway.show, do.group = FALSE, merge = TRUE, do.binary =TRUE , point.size = 1)
+
+p2=spatialVisual_scoring(fl_chat, signaling = pathway.show, do.group = FALSE, merge = TRUE, do.binary = TRUE, point.size = 1)
+p1+p2
+ggsave('EPHA.pdf',device = 'pdf',plot = last_plot())
+#
+pathway.show <- "SEMA4"
+p1=spatialVisual_scoring(wt_chat, signaling = pathway.show, do.group = FALSE, merge = TRUE, do.binary =TRUE , point.size = 1)
+
+p2=spatialVisual_scoring(fl_chat, signaling = pathway.show, do.group = FALSE, merge = TRUE, do.binary = TRUE, point.size = 1)
+p1+p2
+ggsave('SEMA4.pdf',device = 'pdf',plot = last_plot())
+
+### Comparison analysis of multiple datasets using CellChat ###
+# following the turtorial Comparison analysis of multiple datasets using CellChat
+library(CellChat)
+library(patchwork)
+object.list <- list(wt = wt_chat, fl = fl_chat) 
+cellchat <- mergeCellChat(object.list, add.names = names(object.list))
+cellchat
+saveRDS(cellchat, file = "cellchat_merged.rds")
+#Compare the total number of interactions and interaction strength
+gg1 <- compareInteractions(cellchat, show.legend = F, group = c(1,2))
+gg2 <- compareInteractions(cellchat, show.legend = F, group = c(1,2), measure = "weight")
+gg1 + gg2
+ggsave('compareInteractions.pdf',device = 'pdf',plot = last_plot())
+#Compare the number of interactions and interaction strength among different cell populations
+par(mfrow = c(1,2), xpd=TRUE)
+netVisual_diffInteraction(cellchat, weight.scale = T)
+netVisual_diffInteraction(cellchat, weight.scale = T, measure = "weight")
+gg1 + gg2
+
+#Identify altered signaling with distinct interaction strength
+gg1 <- rankNet(cellchat, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = T, do.stat = TRUE)
+gg2 <- rankNet(cellchat, mode = "comparison", measure = "weight", sources.use = NULL, targets.use = NULL, stacked = F, do.stat = TRUE)
+
+gg1 + gg2
+ggsave('altered_signaling.pdf',device = 'pdf',plot = last_plot(),height=15)
+
+# Visually compare cell-cell communication using Chord diagram
+cols=c("#5A5156","#E4E1E3","#FE00FA","#16FF32","#3283FE","#FEAF16","#B00068","#1CFFCE")
+pathways.show <- c("COLLAGEN") 
+weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathways.show) 
+par(mfrow = c(1,2), xpd=TRUE)
+pdf("chord_COLLAGEN.pdf", width = 7, height = 7)
+gg=for (i in 1:length(object.list)) {
+  netVisual_aggregate(object.list[[i]], signaling = pathways.show, color.use=cols,layout = "chord", signaling.name = paste(pathways.show, names(object.list)[i]))
+}
+print(gg)
+dev.off()
+#
+pathways.show <- c("EPHA") 
+weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathways.show) 
+par(mfrow = c(1,2), xpd=TRUE)
+pdf("chord_EPHA.pdf", width = 7, height = 7)
+gg=for (i in 1:length(object.list)) {
+  netVisual_aggregate(object.list[[i]], signaling = pathways.show, color.use=cols,layout = "chord", signaling.name = paste(pathways.show, names(object.list)[i]))
+}
+print(gg)
+dev.off()
+#
+pathways.show <- c("SEMA4") 
+weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathways.show) 
+par(mfrow = c(1,2), xpd=TRUE)
+pdf("chord_SEMA4.pdf", width = 7, height = 7)
+gg=for (i in 1:length(object.list)) {
+  netVisual_aggregate(object.list[[i]], signaling = pathways.show, color.use=cols,layout = "chord", signaling.name = paste(pathways.show, names(object.list)[i]))
+}
+print(gg)
+dev.off()
+#ADGRL
+pathways.show <- c("ADGRL") 
+weight.max <- getMaxWeight(object.list, slot.name = c("netP"), attribute = pathways.show) 
+par(mfrow = c(1,2), xpd=TRUE)
+pdf("chord_ADGRL.pdf", width = 7, height = 7)
+gg=for (i in 1:length(object.list)) {
+  netVisual_aggregate(object.list[[i]], signaling = pathways.show, color.use=cols,layout = "chord", signaling.name = paste(pathways.show, names(object.list)[i]))
+}
+print(gg)
+dev.off()
 
 
 
