@@ -1,6 +1,6 @@
 library(SingleCellExperiment)
 library(Seurat)
-library("tidyverse")
+library(tidyverse)
 library(ggplot2)
 library(presto)
 library(patchwork)
