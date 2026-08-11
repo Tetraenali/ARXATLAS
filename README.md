@@ -1,0 +1,1 @@
+ARXATLAS is an integrative bioinformatics project to map the spatiotemporal transcriptome in X-linked epilepsy models (Arx cKO and Het) across multiple stage of brain development. This repository includes analysis scripts for processing, clustering, and visualizing scMultiome sequencing (scRNA-seq & scATAC-seq) data and spatial transcriptome (Visium HD) data.
