@@ -152,6 +152,7 @@ DimPlot(Arx_female_hip,reduction = 'umap.hippo',group.by = 'library_id',label = 
 ggsave('Arx_female_hip_dim_library_id.pdf',device = 'pdf',plot = last_plot(),width = 8)
 
 ### DEGs analysis ###
+# P21 DEGs
 DefaultAssay(Arx_female_hip)='Spatial.008um'
 Arx_female_hip=JoinLayers(Arx_female_hip, assay='Spatial.008um')
 Idents(Arx_female_hip)='age'
@@ -269,16 +270,208 @@ guides(color = guide_legend(override.aes = list(size = 4)))
 p3
 ggsave('P21_hip_volcano_female.pdf',device = 'pdf',plot = last_plot())
 
+# P120 DEGs
+DefaultAssay(Arx_female_hip)='Spatial.008um'
+Arx_female_hip=JoinLayers(Arx_female_hip, assay='Spatial.008um')
+Idents(Arx_female_hip)='age'
+Arx_P120=subset(Arx_female_hip, idents='p120')
+table(Arx_P120$cell.type)
+Idents(Arx_P120)='cell.type'
+#DE in celltypes between conditions
+# Get unique cell types
+cell_types <- unique(Arx_P120$cell.type)
+Idents(Arx_P120)='genotype'
+# Create a list to store DE results
+dge_results <- list()
 
+# Loop through each cell type
+for (ct in cell_types) {
+  # Subset cells of this cell type
+  cells_ct <- WhichCells(Arx_P120, expression = cell.type == ct)
+  seurat_subset <- subset(Arx_P120, cells = cells_ct)
+  
+  # Perform DE between Het and WT within this cell type
+  de_result <- FindMarkers(
+    seurat_subset,
+    ident.1 = "wt_wt",
+    ident.2 = "fl_wt",
+    group.by = "genotype",
+    logfc.threshold = 0.2,
+    test.use = "wilcox"  
+  )
+  
+  # Save result with name of cell type
+  dge_results[[ct]] <- de_result
+}
 
+head(dge_results[["Pvalb"]])
 
+# scatter plot
+# Create a list to store filtered and labeled results
+combined_results <- list()
+for (ct in names(dge_results)) {
+  df <- dge_results[[ct]]
+  # Add cell type column
+  df$cell_type <- ct
+  # Filter for adjusted p-value < 0.05
+  df <- df[df$p_val_adj < 0.05, ]
+  # Add gene name as a column (rownames are gene names)
+  df$gene <- rownames(df)
+  # Append to list
+  combined_results[[ct]] <- df
+}
 
+# Combine all into one data frame
+all_filtered_dge <- do.call(rbind, combined_results)
 
+# Reorder columns for readability
+all_filtered_dge <- all_filtered_dge[, c("gene", "cell_type", colnames(all_filtered_dge)[!colnames(all_filtered_dge) %in% c("gene", "cell_type")])]
+write.csv(all_filtered_dge, '~/female_all/female_DEG/all_filtered_dge_hip_P120.csv', row.names = FALSE)
+#
+markers=all_filtered_dge
+#prepare data
+markers = markers %>% dplyr::filter(p_val_adj < 0.05) %>% dplyr::filter(abs(avg_log2FC) >= 0.2)
+scRNA.markers = markers
+scRNA.markers$label <- ifelse(scRNA.markers$avg_log2FC<0,"sigUp","sigDown")
+#topgene
+topgene <- scRNA.markers %>%
+group_by(cell_type) %>%
+top_n(n = 10, wt = avg_log2FC) %>%
+bind_rows(group_by(scRNA.markers, cell_type) %>%
+top_n(n = 10, wt = -avg_log2FC))
+#draw bar
+dfbar = scRNA.markers %>%
+group_by(cell_type) %>%
+summarise(low = round(min(avg_log2FC)-0.5),
+up = round(max(avg_log2FC)+0.5))
 
+#add color bar and label
+#draw background
+p1=ggplot(scRNA.markers )+
+geom_col(aes(x = cell_type ,y = low),dfbar,
+fill = "#dcdcdc",alpha = 0.6)+
+geom_col(aes(x = cell_type ,y = up),dfbar,
+fill = "#dcdcdc",alpha = 0.6)+
+geom_jitter(aes(x = cell_type, y = avg_log2FC, color = label),scRNA.markers,
+size = 1,alpha=0.5,position = position_jitter(seed = 1234,width =0.4))+
+scale_color_manual(values = c("#0077c0","#c72d2e"))+
+theme_classic()
+p2=p1+geom_tile(aes(x = cell_type,y = 0,fill=cell_type),NULL,
+height = 0.5,show.legend = F,alpha = 0.5)+
+geom_text(aes(x= cell_type, y = 0, label = cell_type),NULL,
+size = 3,fontface = "bold")
 
+#add genes label
+p3 <- p2 +
+geom_text_repel(data=topgene,aes(x = cell_type,y = avg_log2FC,label =gene), 
+  position = position_jitter(width =0.4),size = 2,box.padding = unit(0.2, "lines"),point.padding = unit(0.3, "lines"),
+  min.segment.length = 0,max.overlaps = 120,segment.size=0.5,segment.alpha = 0.7  )
+#adjust plot
+p3 <- p3+
+labs(x = "CellType",y = "log2FoldChange",
+title = "Differential expression genes")+
+theme(
+plot.title = element_text(size = 14,color = "black",face = "bold"),
+axis.title = element_text(size = 12,color = "black",face = "bold"),
+axis.line.y = element_line(color = "black",linewidth = 0.8),
+axis.line.x = element_blank(),
+axis.text.x = element_blank(),
+axis.ticks.x = element_blank(),
+panel.grid = element_blank(),
+legend.position.inside  = c(0.98,0.96),
+legend.background = element_blank(),
+legend.title = element_blank(),
+legend.direction = "vertical",
+legend.justification = c(1,0),
+legend.text = element_text(size = 12)
+)+
+guides(color = guide_legend(override.aes = list(size = 4)))
+p3
+ggsave('~/female_all/female_DEG/P120_hip_volcano.pdf',device = 'pdf',plot = last_plot(),width = 14)
 
+### GO:Over-representation analysis (ORA)_FEMALE CA1 & DG ###
+# P21 Hip CA1 DEG GO
+#extract background genes
+counts=Arx_female_hip[['Spatial.008um']]$counts
+# Total counts per gene
+gene_counts <- rowSums(counts)
+head(gene_counts)
+# Filter genes by zero or nonzero counts
+zero_genes <- gene_counts[gene_counts == 0]
+nonzero_genes <- gene_counts[gene_counts > 0]
+head(zero_genes)
+head(nonzero_genes)
+# Break if the counts of all zero_genes are greater than zero
+if (sum(zero_genes) > 0) {
+    stop("Nonzero genes are included in zero_genes!")
+}
+nonzero_gene_names <- names(nonzero_genes)
+head(nonzero_gene_names)
+#
+dexp<-read.csv('all_filtered_dge_hip_P21.csv')
+dexp=dexp %>% dplyr::filter(cell_type=='CA1-ProS') 
+colnames(dexp)[1]<-"SYMBOL"
+# Extract all significant results for ORA
+#sigDEGs <- dplyr::filter(dexp, signif=='TRUE')
+#Over-representation analysis with clusterProfiler
+CA1_go <- enrichGO(gene= dexp$SYMBOL,
+                OrgDb= org.Mm.eg.db,
+                keyType = "SYMBOL",
+                universe=nonzero_gene_names,
+                ont= "BP")
+#Reduce redundancy
+CA1_go<-clusterProfiler::simplify(CA1_go)
+CA1_go
 
+#visualization
+item=c("regulation of protein transport","positive regulation of secretion by cell","positive regulation of establishment of protein localization",
+  "proton motive force-driven mitochondrial ATP synthesis","regulation of protein polyubiquitination","positive regulation of hormone secretion",
+  "negative regulation of protein localization","ATP metabolic process","oxidative phosphorylation","Golgi localization") 
 
+CA1_go %>% dplyr::filter(p.adjust < 0.05) %>%
+ggplot(showCategory = item,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of DEGs")
+ggsave('P21_CA1_GO.pdf',plot = last_plot(),device = 'pdf')
 
+# P21 DG
+dexp<-read.csv('all_filtered_dge_hip_P21.csv')
+dexp=dexp %>% dplyr::filter(cell_type=='DG') 
+colnames(dexp)[1]<-"SYMBOL"
+# Extract all significant results for ORA
+#sigDEGs <- dplyr::filter(dexp, signif=='TRUE')
+#Over-representation analysis with clusterProfiler
+DG_go <- enrichGO(gene= dexp$SYMBOL,
+                OrgDb= org.Mm.eg.db,
+                keyType = "SYMBOL",
+                universe=nonzero_gene_names,
+                ont= "BP")
+DG_go<-clusterProfiler::simplify(DG_go)
+DG_go
+
+#visualization
+item=c("lamellipodium organization","regulation of lamellipodium assembly","nucleoside triphosphate biosynthetic process",
+  "regulation of lamellipodium organization","mitochondrial respiratory chain complex assembly","oxidative phosphorylation",
+  "protein localization to endoplasmic reticulum","translation","DNA-templated transcription initiation","RNA splicing") 
+
+DG_go %>% dplyr::filter(p.adjust < 0.05) %>%
+ggplot(showCategory = item,
+  aes(GeneRatio, forcats::fct_reorder(Description, GeneRatio))) + 
+  geom_segment(aes(xend=0, yend = Description)) +
+  geom_point(aes(color=p.adjust, size = Count)) +
+  scale_color_viridis_c(guide=guide_colorbar(reverse=TRUE)) +
+  scale_size_continuous(range=c(1, 7)) +
+  theme_minimal() + 
+  xlab("Gene Ratio") +
+  ylab(NULL) + 
+  ggtitle("GO Enrichment of DEGs")
+ggsave('P21_DG_GO.pdf',plot = last_plot(),device = 'pdf')
 
 
