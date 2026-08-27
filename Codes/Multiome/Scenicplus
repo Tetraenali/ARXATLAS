@@ -6,7 +6,8 @@ import scanpy as sc
 import anndata
 import mudata
 import matplotlib.pyplot as plt
-os.chdir("Downloads/SCENIC")
+import seaborn as sns
+os.chdir("outs_male/outs")
 scplus_mdata = mudata.read("scplusmdata.h5mu")
 
 #check
@@ -14,8 +15,8 @@ print(scplus_mdata)
 print(scplus_mdata['scRNA_counts'].obs)
 print(scplus_mdata['scRNA_counts'].var)  
 print(scplus_mdata.uns)
-eRegulon_gene_AUC.obs['scRNA_counts:Clusters'].cat.categories
-unique_groups = eRegulon_gene_AUC.obs['scRNA_counts:Clusters'].unique()
+#eRegulon_gene_AUC.obs['scRNA_counts:Clusters'].cat.categories
+#unique_groups = eRegulon_gene_AUC.obs['scRNA_counts:Clusters'].unique()
 scplus_mdata.uns["direct_e_regulon_metadata"]
 scplus_mdata.uns["extended_e_regulon_metadata"]
 
@@ -26,41 +27,38 @@ eRegulon_gene_AUC = anndata.concat(
 eRegulon_gene_AUC.obs = scplus_mdata.obs.loc[eRegulon_gene_AUC.obs_names]
 sc.pp.neighbors(eRegulon_gene_AUC, use_rep = "X")
 sc.tl.umap(eRegulon_gene_AUC)
+eRegulon_gene_AUC.var_names_make_unique()
+print(eRegulon_gene_AUC.obs.columns.tolist())
+eRegulon_gene_AUC.obs["scRNA_counts:leiden_res1.0"] = (
+    eRegulon_gene_AUC.obs["scRNA_counts:leiden_res1.0"].astype(str).astype("category")
+)
 
-color_dict = {
-    'AntIDIDTT': "#065143",
-    'MMN': "#70B77E",
-    'NPC': "#E0A890",
-    'NeuralPro': "#F56476",
-    'NeuralProNeurog2': "#CE1483",
-    'PMN': "#053C5E" ,
-    'PVHSON': "#38A3A5",
-    'Prethalamus': "#80ED99",
-    'SMN': "#c75c5a",
-    'TuberalARCVMH': "#919191"}
+cols = sns.color_palette("husl", 22).as_hex()
+ax = sc.pl.umap(eRegulon_gene_AUC,
+                 color="scRNA_counts:leiden_res1.0",
+                 palette=cols,
+                 show=False)
 
-sc.pl.umap(eRegulon_gene_AUC,
-           color = "scRNA_counts:Cluster_Pass2", palette=color_dict)
-sc.pl.umap(eRegulon_gene_AUC, color = "scRNA_counts:Cluster_Pass2")
-
+ax.figure.savefig("figures/umap_clusters.pdf", dpi=300, bbox_inches="tight")
 
 #plot
 from scenicplus.RSS import (regulon_specificity_scores, plot_rss)
 rss = regulon_specificity_scores(
     scplus_mudata = scplus_mdata,
-    variable = "scRNA_counts:Cluster_Pass2",
+    variable = "scRNA_counts:leiden_res1.0",
     modalities = ["direct_gene_based_AUC", "extended_gene_based_AUC"])
 plot_rss(
     data_matrix = rss,
     top_n = 10,
-    num_columns = 5)
+    num_columns = 5,
+    save="figures/regulon_specificity_scores.pdf")
 
 #plot
 import matplotlib.pyplot as plt
 ax = sc.pl.umap(eRegulon_gene_AUC,
            color = list(set([x for xs in [rss.loc[ct].sort_values()[0:2].index for ct in rss.index] for x in xs ])))
 ax.figure.savefig('umap_output.tiff', format='tiff', dpi=300)
-plt.savefig('umap_output.tiff', format='tiff', dpi=300)
+plt.savefig('figurs/umap_output.tiff', format='tiff', dpi=300)
 plt.show()
 
 genes = ['Arx_direct_+/+_(192g)',
