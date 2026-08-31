@@ -229,17 +229,10 @@ heatmap_dotplot(
     scplus_mudata = scplus_mdata,
     color_modality = "direct_gene_based_AUC",
     size_modality = "direct_region_based_AUC",
-    group_variable = "scRNA_counts:cell_type",
-    #group_variable_order=['ControlAntIDIDTT', 'MutantAntIDIDTT',
-                          'ControlMMN', 'MutantMMN',
-                          'ControlNPC', 'MutantNPC',
-                          'ControlNeuralPro', 'MutantNeuralPro',
-           'ControlNeuralProNeurog2', 'MutantNeuralProNeurog2',
-           'ControlPMN', 'MutantPMN',
-           'ControlPVHSON', 'MutantPVHSON',
-           'ControlPrethalamus', 'MutantPrethalamus',
-           'ControlSMN', 'MutantSMN',
-           'ControlTuberalARCVMH', 'MutantTuberalARCVMH'],
+    group_variable = "scRNA_counts:cell_type_genotype",
+    group_variable_order=['Progenitors_wt_y', 'Progenitors_fl_y',
+                          'Postmitosis_wt_y','Postmitosis_fl_y'  
+                          ],
     eRegulon_metadata_key = "direct_e_regulon_metadata",
     color_feature_key = "Gene_signature_name",
     size_feature_key = "Region_signature_name",
@@ -248,8 +241,8 @@ heatmap_dotplot(
     scale_size_matrix=True,
     scale_color_matrix=True,
     orientation = "horizontal",
-    figsize = (24, 10),  # Reduced to be within the default limit
-    save = "_heatmap_plot.pdf")
+    figsize = (24, 10),
+    save = "figures/heatmap_plot_genotype.pdf")
 #
 from scenicplus.plotting.dotplot import heatmap_dotplot
 heatmap_dotplot(
@@ -266,7 +259,22 @@ heatmap_dotplot(
     scale_color_matrix=True,
     orientation = "horizontal",
     figsize = (24, 10),  # Reduced to be within the default limit
-    save = "_heatmap_plot.pdf")
+    save = "heatmap_plot.pdf")
+###
+rna.obs['cell_type_genotype'] = (
+    rna.obs['cell_type'].astype(str) + "_" + rna.obs['sample_id'].astype(str)
+).astype('category')
+
+scplus_mdata['scRNA_counts'].obs['cell_type_genotype'] = rna.obs.loc[
+    scplus_mdata['scRNA_counts'].obs_names, 'cell_type_genotype'
+]
+scplus_mdata.update()
+scplus_mdata.write("figures/scplus_mdata_0831.h5mu")
+
+
+
+
+
 
 
 
