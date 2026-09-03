@@ -1,1 +1,276 @@
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(presto)
+library(SeuratWrappers)
+library(Banksy)
+library(sctransform)
+library(tidyverse)
+library(spacexr)
+
+#input all objects
+#male
+#p16 male
+p16_wt_y=readRDS('/data/PetrosLab/Arx_VisiumHD/P16/wt_y.rds')
+p16_fl_y=readRDS('/data/PetrosLab/Arx_VisiumHD/P16/fl_y.rds')
+#p42 male
+p42_wt_y=readRDS('/data/BSPC-Petros/Arx_Project/110624/wt_y_1121.rds')
+p42_fl_y=readRDS('/data/BSPC-Petros/Arx_Project/110624/fl_y_1122.rds')
+#p21 male
+p21_wt_y=readRDS('/data/BSPC-Petros/Arx_Project/P21_male_analysis/P21_wt_y.rds')
+p21_fl_y=readRDS('/data/BSPC-Petros/Arx_Project/P21_male_analysis/P21_fl_y.rds')
+#female
+#p21 female
+p21_wt_wt_1=readRDS('/data/BSPC-Petros/Arx_Project/250527_P21/wt_wt.rds')
+p21_fl_wt_1=readRDS('/data/BSPC-Petros/Arx_Project/250527_P21/fl_wt.rds')
+
+p21_wt_wt_2=readRDS('/data/BSPC-Petros/Arx_Project/250527_P21/112625/wt_wt.rds')
+p21_fl_wt_2=readRDS('/data/BSPC-Petros/Arx_Project/250527_P21/112625/fl_wt.rds')
+
+#p120 female
+p120_wt_wt_1=readRDS('/data/BSPC-Petros/Arx_Project/240819/wt_wt.rds')
+p120_fl_wt_1=readRDS('/data/BSPC-Petros/Arx_Project/240819/fl_wt.rds')
+
+p120_wt_wt_2=readRDS('/data/BSPC-Petros/Arx_Project/250527_4M/wt_wt.rds')
+p120_fl_wt_2=readRDS('/data/BSPC-Petros/Arx_Project/250527_4M/fl_wt.rds')
+
+#default assay
+DefaultAssay(p21_fl_y)='Spatial.008um' #DefaultAssay all obj with "Spatial.008um"
+#clean up
+p16_wt_y <- DietSeurat(p16_wt_y,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p16_fl_y <- DietSeurat(p16_fl_y,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+
+p42_wt_y <- DietSeurat(p42_wt_y,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p42_fl_y <- DietSeurat(p42_fl_y,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+
+p21_wt_y <- DietSeurat(p21_wt_y,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p21_fl_y <- DietSeurat(p21_fl_y,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+
+DefaultAssay(p120_wt_wt_2)='Spatial.008um'
+DefaultAssay(p120_fl_wt_2)='Spatial.008um'
+
+p21_wt_wt_1 <- DietSeurat(p21_wt_wt_1,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p21_fl_wt_1 <- DietSeurat(p21_fl_wt_1,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p21_wt_wt_2 <- DietSeurat(p21_wt_wt_2,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p21_fl_wt_2 <- DietSeurat(p21_fl_wt_2,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+
+p120_wt_wt_1 <- DietSeurat(p120_wt_wt_1,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p120_fl_wt_1 <- DietSeurat(p120_fl_wt_1,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p120_wt_wt_2 <- DietSeurat(p120_wt_wt_2,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+p120_fl_wt_2 <- DietSeurat(p120_fl_wt_2,assays = "Spatial.008um",dimreducs = NULL,graphs = NULL)
+#add label
+p16_wt_y$genotype='wt'
+p16_fl_y$genotype='fl'
+p21_wt_y$genotype='wt'
+p21_fl_y$genotype='fl'
+p42_wt_y$genotype='wt'
+p42_fl_y$genotype='fl'
+
+p16_wt_y$age='p16'
+p16_fl_y$age='p16'
+p21_wt_y$age='p21'
+p21_fl_y$age='p21'
+p42_wt_y$age='p42'
+p42_fl_y$age='p42'
+
+p16_wt_y$sex='male'
+p16_fl_y$sex='male'
+p21_wt_y$sex='male'
+p21_fl_y$sex='male'
+p42_wt_y$sex='male'
+p42_fl_y$sex='male'
+##female add label
+p21_wt_wt_1$genotype='wt_wt'
+p21_fl_wt_1$genotype='fl_wt'
+p21_wt_wt_2$genotype='wt_wt'
+p21_fl_wt_2$genotype='fl_wt'
+
+p120_wt_wt_1$genotype='wt_wt'
+p120_fl_wt_1$genotype='fl_wt'
+p120_wt_wt_2$genotype='wt_wt'
+p120_fl_wt_2$genotype='fl_wt'
+#
+p21_wt_wt_1$age='p21'
+p21_fl_wt_1$age='p21'
+p21_wt_wt_2$age='p21'
+p21_fl_wt_2$age='p21'
+
+p120_wt_wt_1$age='p120'
+p120_fl_wt_1$age='p120'
+p120_wt_wt_2$age='p120'
+p120_fl_wt_2$age='p120'
+#
+p21_wt_wt_1$sex='female'
+p21_fl_wt_1$sex='female'
+p21_wt_wt_2$sex='female'
+p21_fl_wt_2$sex='female'
+
+p120_wt_wt_1$sex='female'
+p120_fl_wt_1$sex='female'
+p120_wt_wt_2$sex='female'
+p120_fl_wt_2$sex='female'
+#
+p21_wt_wt_1$rep='1'
+p21_fl_wt_1$rep='1'
+p21_wt_wt_2$rep='2'
+p21_fl_wt_2$rep='2'
+
+p120_wt_wt_1$rep='1'
+p120_fl_wt_1$rep='1'
+p120_wt_wt_2$rep='2'
+p120_fl_wt_2$rep='2'
+##
+obj=merge(p16_wt_y,y=c(p16_fl_y,p21_wt_y,p21_fl_y,p42_wt_y,p42_fl_y,
+                       p21_wt_wt_1,p21_fl_wt_1,p21_wt_wt_2,p21_fl_wt_2,
+                       p120_wt_wt_1,p120_fl_wt_1,p120_wt_wt_2,p120_fl_wt_2),add.cell.ids = c("1", "2", "3","4","5","6","7","8","9","10","11","12","13","14"))
+#QC
+obj$age_genotype=paste0(obj$age,sep='_',obj$genotype)
+obj$library_id=paste0(obj$age_genotype,sep='_',obj$sex)
+Idents(obj)='library_id'
+VlnPlot(obj, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+ggsave('/data/BSPC-Petros/Arx_Project/all/vlnplot.pdf',device = 'pdf',plot = last_plot())
+obj_subset=subset(obj,subset=nCount_Spatial.008um<2000& nCount_Spatial.008um>50)
+VlnPlot(obj_subset, features = "nCount_Spatial.008um", pt.size = 0) + theme(axis.text = element_text(size = 4)) + NoLegend()
+ggsave('/data/BSPC-Petros/Arx_Project/all/vlnplot_qc.pdf',device = 'pdf',plot = last_plot())
+saveRDS(obj_subset, '/data/BSPC-Petros/Arx_Project/all/obj_subset_qc.rds')
+obj_subset=readRDS('/data/BSPC-Petros/Arx_Project/all/obj_subset_qc.rds')
+
+##normalized
+options(future.globals.maxSize = 300000 * 1024^2)
+
+DefaultAssay(obj_subset) <- "Spatial.008um"
+obj_subset <- NormalizeData(obj_subset)
+obj_subset <- FindVariableFeatures(obj_subset)
+obj_subset <- ScaleData(obj_subset)
+###
+##normalized
+# we select 5,000 cells and create a new 'sketch' assay;ncells=5000 
+obj_subset <- SketchData(
+  object = obj_subset,
+  ncells = 5000,
+  method = "LeverageScore",
+  sketched.assay = "sketch")
+
+# switch analysis to sketched cells
+DefaultAssay(obj_subset) <- "sketch"
+
+# perform clustering workflow
+obj_subset <- FindVariableFeatures(obj_subset)
+obj_subset <- ScaleData(obj_subset)
+obj_subset <- RunPCA(obj_subset, assay = "sketch", reduction.name = "pca.sketch")
+obj_subset <- FindNeighbors(obj_subset, assay = "sketch", reduction = "pca.sketch", dims = 1:50)
+obj_subset<- FindClusters(obj_subset, cluster.name = "seurat_cluster.sketched", resolution = 3)
+obj_subset<- RunUMAP(obj_subset, reduction = "pca.sketch", reduction.name = "umap.sketch", return.model = T, dims = 1:50)
+
+DimPlot(obj_subset,reduction = 'umap.sketch',group.by = 'seurat_cluster.sketched',split.by = 'library_id',label = FALSE,label.size = 3,raster = FALSE)+ NoLegend()
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_sketch_id.pdf',device = 'pdf',plot = last_plot())
+colnames(Arx_male@meta.data)#check metadata structure
+
+#Project Data
+obj_subset <- ProjectData(
+  object = obj_subset,
+  assay = "Spatial.008um",
+  full.reduction = "full.pca.sketch",
+  sketched.assay = "sketch",
+  sketched.reduction = "pca.sketch",
+  umap.model = "umap.sketch",
+  dims = 1:50,
+  refdata = list(seurat_cluster.projected = "seurat_cluster.sketched"))
+saveRDS(obj_subset, '/data/BSPC-Petros/Arx_Project/all/obj_subset_project.rds')
+########### visualization with sketh data
+obj_subset=readRDS('/data/BSPC-Petros/Arx_Project/all/obj_subset_project.rds')
+DefaultAssay(obj_subset) <- "sketch"
+library(RColorBrewer)
+mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(60)
+ImageDimPlot(obj_subset, group.by = 'seurat_clusters',cols = mycolors,fov = c('tissue_hires_image.png.008um','tissue_hires_image.png.008um.2')) #p16
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p16.pdf',device = 'pdf',plot = last_plot(),width = 10)
+ImageDimPlot(obj_subset, group.by = 'seurat_clusters',cols = mycolors,fov = c('tissue_hires_image.png.008um.3','tissue_hires_image.png.008um.4')) #p42
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p21.pdf',device = 'pdf',plot = last_plot(),width = 10)
+ImageDimPlot(obj_subset, group.by = 'seurat_clusters',cols = mycolors,fov = c('slice1.008um','slice1.008um.6')) #p42
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p42.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_clusters',cols = mycolors,fov = c('wt.008um','fl.008um')) #p21 female
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p21_female.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_clusters',cols = mycolors,fov = c('wt.008um.9','fl.008um.10')) #p21_2 female
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p21_female_2.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_clusters',cols = mycolors,fov = c('wt.008um.13','fl.008um.14')) #p120_2 female
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p120_female_2.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+DimPlot(obj_subset, group.by = 'seurat_clusters',cols = mycolors) 
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_sketch_clusters.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+FeaturePlot(obj_subset,features = c('Slc17a7','Gad1','Aldh1l1','Mbp'),cols = c('#457b9d','#ab1d22'))
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_markers.pdf',device = 'pdf',plot = last_plot(),width = 10)
+FeaturePlot(obj_subset,features = c('Slc32a1','Gfap','Cx3cr1','Mog'),cols = c('#457b9d','#ab1d22'))
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_marker_2.pdf',device = 'pdf',plot = last_plot(),width = 10)
+FeaturePlot(obj_subset,features = c('Aif1','Pdgfrb','Pecam1','Iba1'),cols = c('#457b9d','#ab1d22'))
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_marker_3.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+FeaturePlot(obj_subset,features = c('Slc17a7','Slc32a1','Gfap','Mog'),cols = c('#f6f5ee','springgreen4'))
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_markers_0617.pdf',device = 'pdf',plot = last_plot(),width = 10)
+FeaturePlot(obj_subset,features = c('Aqp4','Gad1','Mbp','P2ry12'),cols = c('#f6f5ee','springgreen4'))
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_markers_1_0617.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+cols=DiscretePalette(length(unique(obj_subset$library_id)),'alphabet')
+DimPlot(obj_subset, group.by = 'library_id',cols = cols, raster = FALSE) 
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_id.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+# visualization with spatial.008um
+obj_subset=readRDS('/data/BSPC-Petros/Arx_Project/all/obj_subset_project.rds')
+DefaultAssay(obj_subset) <- "Spatial.008um"
+library(RColorBrewer)
+mycolors <- colorRampPalette(brewer.pal(8, "Set1"))(60)
+level1 <- as.character(0:48)
+obj_subset$seurat_cluster.projected <- factor(obj_subset$seurat_cluster.projected , levels = level1)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_cluster.projected',cols = mycolors,fov = c('tissue_hires_image.png.008um','tissue_hires_image.png.008um.2')) #p16
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p16_0828.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_cluster.projected',cols = mycolors,fov = c('tissue_hires_image.png.008um.3','tissue_hires_image.png.008um.4')) #p21
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p21_0828.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_cluster.projected',cols = mycolors,fov = c('slice1.008um','slice1.008um.6')) #p42
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p42_0828.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+#female
+ImageDimPlot(obj_subset, group.by = 'seurat_cluster.projected',cols = mycolors,fov = c('wt.008um','fl.008um')) #p21 female
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p21_female_0828.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_cluster.projected',cols = mycolors,fov = c('wt.008um.9','fl.008um.10')) #p21_2 female
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p21_female_0828_2.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+ImageDimPlot(obj_subset, group.by = 'seurat_cluster.projected',cols = mycolors,fov = c('wt.008um.13','fl.008um.14')) #p120_2 female
+ggsave('/data/BSPC-Petros/Arx_Project/all/imageplot_p120_female_0828_2.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+DimPlot(obj_subset, group.by = 'seurat_cluster.projected',cols = mycolors,pt.size = 0.1, raster = FALSE) 
+ggsave('/data/BSPC-Petros/Arx_Project/all/dimplot_clusters_0828.pdf',device = 'pdf',plot = last_plot(),width = 10)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
